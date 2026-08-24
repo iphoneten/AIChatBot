@@ -69,6 +69,54 @@ class SessionStore:
             await db.commit()
         return cursor.rowcount or 0
 
+    async def list_users(self) -> list[dict[str, Any]]:
+        """用户列表（含消息数与最近活跃时间，供管理后台使用）。"""
+        async with self._connect() as db:
+            db.row_factory = aiosqlite.Row
+            cursor = await db.execute(
+                """
+                SELECT u.telegram_id, u.username, u.first_name,
+                       u.preferred_model, u.created_at,
+                       COUNT(m.id) AS message_count,
+                       MAX(m.created_at) AS last_active
+                FROM users u
+                LEFT JOIN messages m ON m.telegram_id = u.telegram_id
+                GROUP BY u.id
+                ORDER BY u.created_at DESC
+                """
+            )
+            rows: list[Any] = await cursor.fetchall()
+        return [dict(r) for r in rows]
+
+    async def get_stats(self) -> dict[str, Any]:
+        """全局统计：用户数、消息数、今日消息数、各模型用量。"""
+        async with self._connect() as db:
+            db.row_factory = aiosqlite.Row
+            async def one(sql: str) -> int:
+                cur = await db.execute(sql)
+                row = await cur.fetchone()
+                return row[0] if row else 0
+
+            total_users = await one("SELECT COUNT(*) FROM users")
+            total_messages = await one("SELECT COUNT(*) FROM messages")
+            today_messages = await one(
+                "SELECT COUNT(*) FROM messages WHERE created_at >= date('now', 'localtime')"
+            )
+            cur = await db.execute(
+                """
+                SELECT COALESCE(model, 'unknown') AS model, COUNT(*) AS count
+                FROM messages WHERE role = 'assistant'
+                GROUP BY model ORDER BY count DESC
+                """
+            )
+            by_model = {r["model"]: r["count"] for r in await cur.fetchall()}
+        return {
+            "total_users": total_users,
+            "total_messages": total_messages,
+            "today_messages": today_messages,
+            "messages_by_model": by_model,
+        }
+
     async def get_preferred_model(self, telegram_id: int) -> str | None:
         """获取用户偏好的模型（未设置时为 None，回退全局默认）。"""
         async with self._connect() as db:

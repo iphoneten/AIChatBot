@@ -121,4 +121,14 @@ def create_router(llm: LLMClient, store: SessionStore) -> APIRouter:
             raise HTTPException(status_code=404, detail="用户不存在")
         return {"model": req.model}
 
+    @router.get("/admin/users", response_model=list[dict])
+    async def admin_users() -> list[dict]:
+        """用户列表（管理后台使用，经内部鉴权保护）。"""
+        return await store.list_users()
+
+    @router.get("/admin/stats")
+    async def admin_stats() -> dict:
+        """全局统计（管理后台使用）。"""
+        return await store.get_stats()
+
     return router
