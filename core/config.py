@@ -26,6 +26,7 @@ class Settings(BaseSettings):
     system_prompt: str = "你是一个乐于助人的中文AI助手"
     max_context_messages: int = 20
     llm_timeout: int = 60
+    llm_max_retries: int = 3  # 瞬态错误最大尝试次数（含首次）
 
     # 服务地址（bot-api / admin-web 调用 agent 用）
     agent_base_url: str = "http://127.0.0.1:8100"
