@@ -1,0 +1,41 @@
+# 环境与密钥（不入库）
+.env
+.env.local
+.env.*.local
+
+# Python 运行产物
+__pycache__/
+*.py[cod]
+*.egg-info/
+.eggs/
+build/
+dist/
+
+# 虚拟环境
+.venv/
+venv/
+uv.lock.bak
+
+# 数据文件
+data/
+*.db
+*.sqlite3
+
+# 日志
+logs/
+*.log
+
+# 测试与工具缓存
+.pytest_cache/
+.mypy_cache/
+.ruff_cache/
+.coverage
+htmlcov/
+
+# IDE / 编辑器
+.idea/
+.vscode/
+.DS_Store
+
+# Docker 本地数据
+docker-data/
