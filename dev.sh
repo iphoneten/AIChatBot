@@ -45,44 +45,44 @@ is_running() {
 
 start_one() {
     local svc="$1"
-    if is_running "$svc"; then
-        log "$svc 已在运行（PID $(service_pid "$svc")），跳过"
+    if is_running "${svc}"; then
+        log "${svc} 已在运行 (PID $(service_pid "${svc}"))，跳过"
         return
     fi
     # bot 缺少 Token 时跳过并提示
-    if [ "$svc" = "bot" ] && ! grep -q '^TELEGRAM_BOT_TOKEN=.\+' .env 2>/dev/null; then
+    if [ "${svc}" = "bot" ] && ! grep -q '^TELEGRAM_BOT_TOKEN=.\+' .env 2>/dev/null; then
         warn "未配置 TELEGRAM_BOT_TOKEN，跳过 bot-api 启动"
         return
     fi
-    log "启动 $svc ……"
-    nohup uv run python -m "$svc" >> "$LOG_DIR/$svc.log" 2>&1 &
-    echo $! > "$RUN_DIR/$svc.pid"
+    log "启动 ${svc} ......"
+    nohup uv run python -m "${svc}" >> "${LOG_DIR}/${svc}.log" 2>&1 &
+    echo $! > "${RUN_DIR}/${svc}.pid"
     sleep 1
-    if is_running "$svc"; then
-        log "$svc 已启动（PID $(service_pid "$svc")，日志：$LOG_DIR/$svc.log）"
+    if is_running "${svc}"; then
+        log "${svc} 已启动（PID $(service_pid "${svc}")，日志：${LOG_DIR}/${svc}.log）"
     else
-        err "$svc 启动失败，请查看 $LOG_DIR/$svc.log"
+        err "${svc} 启动失败，请查看 ${LOG_DIR}/${svc}.log"
     fi
 }
 
 stop_one() {
     local svc="$1"
-    local pid; pid=$(service_pid "$svc")
-    if ! is_running "$svc"; then
-        rm -f "$RUN_DIR/$svc.pid"
+    local pid; pid=$(service_pid "${svc}")
+    if ! is_running "${svc}"; then
+        rm -f "${RUN_DIR}/${svc}.pid"
         return
     fi
-    log "停止 $svc（PID $pid）……"
-    kill "$pid" 2>/dev/null
+    log "停止 ${svc} (PID ${pid}) ..."
+    kill "${pid}" 2>/dev/null
     for _ in $(seq 1 10); do
-        is_running "$svc" || break
+        is_running "${svc}" || break
         sleep 0.5
     done
-    if is_running "$svc"; then
-        warn "$svc 未响应 SIGTERM，强制结束"
-        kill -9 "$pid" 2>/dev/null
+    if is_running "${svc}"; then
+        warn "${svc} 未响应 SIGTERM，强制结束"
+        kill -9 "${pid}" 2>/dev/null
     fi
-    rm -f "$RUN_DIR/$svc.pid"
+    rm -f "${RUN_DIR}/${svc}.pid"
 }
 
 cmd_start() {
@@ -103,11 +103,11 @@ cmd_stop() {
 cmd_status() {
     local all_stopped=1
     for svc in "${SERVICES[@]}"; do
-        if is_running "$svc"; then
-            log "$svc 运行中（PID $(service_pid "$svc")）"
+        if is_running "${svc}"; then
+            log "${svc} 运行中 (PID $(service_pid "${svc}"))"
             all_stopped=0
         else
-            log "$svc 未运行"
+            log "${svc} 未运行"
         fi
     done
     return "$all_stopped"
