@@ -1,5 +1,7 @@
 """Telegram 命令与消息处理器。"""
 
+import logging
+
 from aiogram import F, Router
 from aiogram.filters import Command, CommandStart
 from aiogram.types import Message
@@ -75,7 +77,11 @@ async def cmd_model(message: Message) -> None:
 @router.message(F.text)
 async def on_text(message: Message) -> None:
     """普通文本消息 → 经 ai-agent 调用大模型并回复。"""
-    await message.answer_chat_action("typing")
+    # 打字状态为尽力而为：失败不阻塞对话
+    try:
+        await message.bot.send_chat_action(chat_id=message.chat.id, action="typing")
+    except Exception as e:  # noqa: BLE001 - 状态提示失败仅记录日志
+        logging.getLogger(__name__).warning(f"发送 typing 状态失败：{e}")
     user = message.from_user
     async with _client() as client:
         reply = await client.chat(
