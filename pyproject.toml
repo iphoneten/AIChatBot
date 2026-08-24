@@ -1,0 +1,45 @@
+[project]
+name = "aiChatBot"
+version = "0.1.0"
+description = "Telegram 智能聊天机器人：经 RouterHub 中转网关对接各大模型"
+readme = "readme.md"
+requires-python = ">=3.11"
+
+dependencies = [
+    # bot-api
+    "aiogram>=3.15",
+    # ai-agent / admin-web
+    "fastapi>=0.115",
+    "uvicorn[standard]>=0.34",
+    # LLM（openai 兼容协议，base_url 指向 RouterHub）
+    "openai>=1.60",
+    "httpx>=0.28",
+    # 存储
+    "aiosqlite>=0.20",
+    # 配置与日志
+    "pydantic-settings>=2.7",
+    "loguru>=0.7",
+    # admin-web 认证
+    "pwdlib[argon2]>=0.2",
+    "pyjwt>=2.10",
+]
+
+[dependency-groups]
+dev = [
+    "pytest>=8.3",
+    "pytest-asyncio>=0.25",
+    "ruff>=0.9",
+]
+
+[tool.uv]
+# 单仓多服务脚本工程，仅管理依赖，不作为分发包构建
+package = false
+# 本机为 macOS x86_64 且无 C 编译器：26.x 无对应预编译包，固定 25.1.0（含 abi3 wheel）
+constraint-dependencies = ["argon2-cffi-bindings==25.1.0"]
+
+[tool.ruff]
+line-length = 100
+target-version = "py311"
+
+[tool.pytest.ini_options]
+asyncio_mode = "auto"
