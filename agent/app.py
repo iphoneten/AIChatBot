@@ -1,6 +1,5 @@
 """FastAPI 应用工厂：数据库初始化、健康检查、内部鉴权。"""
 
-import asyncio  # noqa: F401 - 预留：后续中间件/后台任务使用
 from collections.abc import AsyncIterator
 from contextlib import asynccontextmanager
 from pathlib import Path
@@ -8,6 +7,8 @@ from pathlib import Path
 from fastapi import FastAPI, Request
 from fastapi.responses import JSONResponse
 
+from agent.llm import LLMClient
+from agent.routes import create_router
 from core.config import get_settings
 from core.logging import setup_logging
 
@@ -32,19 +33,22 @@ async def init_db() -> None:
 @asynccontextmanager
 async def lifespan(app: FastAPI) -> AsyncIterator[None]:
     await init_db()
+    logger.info("LLM 客户端已就绪（RouterHub 对接）")
     yield
+    await app.state.llm.aclose()
 
 
 def create_app() -> FastAPI:
     settings = get_settings()
     app = FastAPI(title="ai-agent", lifespan=lifespan)
+    app.state.llm = LLMClient(settings)
 
     @app.middleware("http")
     async def internal_auth(request: Request, call_next):
         """服务间简单鉴权：校验 X-Internal-Token（未配置 token 时跳过，便于本地开发）。"""
         if settings.agent_internal_token:
-            health_path = ("/docs", "/openapi.json", "/health")
-            if request.url.path not in health_path and request.headers.get(
+            public_paths = ("/docs", "/openapi.json", "/health")
+            if request.url.path not in public_paths and request.headers.get(
                 "X-Internal-Token"
             ) != settings.agent_internal_token:
                 return JSONResponse({"detail": "无效的内部令牌"}, status_code=401)
@@ -53,5 +57,7 @@ def create_app() -> FastAPI:
     @app.get("/health")
     async def health() -> dict[str, str]:
         return {"status": "ok", "service": "ai-agent"}
+
+    app.include_router(create_router(app.state.llm))
 
     return app
