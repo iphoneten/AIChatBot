@@ -37,5 +37,8 @@ htmlcov/
 .vscode/
 .DS_Store
 
+# AI 编码助手上下文（本地维护，不入库）
+AGENTS.md
+
 # Docker 本地数据
 docker-data/
