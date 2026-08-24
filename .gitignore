@@ -25,6 +25,9 @@ data/
 logs/
 *.log
 
+# 脚本运行时状态（PID 文件）
+.run/
+
 # 测试与工具缓存
 .pytest_cache/
 .mypy_cache/

@@ -185,12 +185,14 @@ JWT_SECRET=用于签发管理后台JWT的随机密钥
 
 ## 7. 开发计划
 
-- [ ] **M1 项目初始化**：uv 环境搭建、三服务 + core 骨架、配置加载与校验
-- [ ] **M2 ai-agent 核心**：FastAPI 内部 API + LLM 客户端封装（openai SDK → RouterHub），单轮问答跑通
-- [ ] **M3 bot-api 接入**：aiogram 命令与消息处理，经 agent 完成完整对话链路；多轮上下文（SQLite）+ `/new` 重置
-- [ ] **M4 健壮性**：超时重试、长文本分段、错误兜底、日志、服务间鉴权
-- [ ] **M5 admin-web 基础版**：JWT 登录 + 用户列表 + 对话统计
-- [ ] **M6 部署**：Dockerfile（三个服务）+ docker-compose 编排
+- [x] **M1 项目初始化**：uv 环境搭建、三服务 + core 骨架、配置加载与校验
+- [x] **M2 ai-agent 核心**：FastAPI 内部 API + LLM 客户端封装（openai SDK → RouterHub），单轮问答跑通
+- [x] **M3 bot-api 接入**：aiogram 命令与消息处理，经 agent 完成完整对话链路；多轮上下文（SQLite）+ `/new` 重置
+- [x] **M4 健壮性**：超时重试、长文本分段、错误兜底、日志、服务间鉴权
+- [x] **M5 admin-web 基础版**：JWT 登录 + 用户列表 + 对话统计
+- [x] **M6 部署**：Dockerfile（三个服务）+ docker-compose 编排
+
+> v1.0 已完成。开发环境使用 `./dev.sh start|stop|status|restart`；生产部署使用 `docker compose up -d --build`。
 
 ## 8. 后续版本路线（非 v1.0）
 

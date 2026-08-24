@@ -1,0 +1,135 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>aiChatBot 管理后台</title>
+<style>
+  * { box-sizing: border-box; margin: 0; padding: 0; }
+  body { font-family: -apple-system, "PingFang SC", "Microsoft YaHei", sans-serif;
+         background: #f5f6f8; color: #2c3e50; min-height: 100vh; }
+  header { background: #1f2937; color: #fff; padding: 14px 24px;
+           display: flex; justify-content: space-between; align-items: center; }
+  header h1 { font-size: 18px; font-weight: 600; }
+  header button { background: transparent; border: 1px solid #4b5563; color: #d1d5db;
+                  padding: 6px 14px; border-radius: 6px; cursor: pointer; }
+  main { max-width: 960px; margin: 24px auto; padding: 0 16px; }
+  .cards { display: flex; gap: 16px; margin-bottom: 24px; flex-wrap: wrap; }
+  .card { background: #fff; border-radius: 10px; padding: 20px 24px; flex: 1; min-width: 160px;
+          box-shadow: 0 1px 3px rgba(0,0,0,.08); }
+  .card .num { font-size: 28px; font-weight: 700; color: #2563eb; }
+  .card .label { font-size: 13px; color: #6b7280; margin-top: 4px; }
+  section { background: #fff; border-radius: 10px; padding: 20px 24px; margin-bottom: 24px;
+            box-shadow: 0 1px 3px rgba(0,0,0,.08); }
+  section h2 { font-size: 15px; margin-bottom: 12px; color: #374151; }
+  table { width: 100%; border-collapse: collapse; font-size: 13px; }
+  th, td { text-align: left; padding: 8px 10px; border-bottom: 1px solid #f0f1f3; }
+  th { color: #9ca3af; font-weight: 500; }
+  /* 登录 */
+  #login-view { display: flex; justify-content: center; align-items: center; min-height: 80vh; }
+  .login-box { background: #fff; padding: 36px 40px; border-radius: 12px; width: 340px;
+               box-shadow: 0 4px 16px rgba(0,0,0,.1); }
+  .login-box h2 { text-align: center; margin-bottom: 22px; }
+  .login-box input { width: 100%; padding: 10px 12px; margin-bottom: 14px; border: 1px solid #d1d5db;
+                     border-radius: 6px; font-size: 14px; }
+  .login-box button { width: 100%; padding: 10px; background: #2563eb; color: #fff; border: none;
+                      border-radius: 6px; font-size: 14px; cursor: pointer; }
+  .login-box button:hover { background: #1d4ed8; }
+  #err { color: #dc2626; font-size: 13px; margin-bottom: 10px; min-height: 18px; text-align: center; }
+  .hidden { display: none !important; }
+</style>
+</head>
+<body>
+
+<!-- 登录视图 -->
+<div id="login-view">
+  <div class="login-box">
+    <h2>aiChatBot 管理后台</h2>
+    <div id="err"></div>
+    <input id="username" placeholder="用户名" autocomplete="username">
+    <input id="password" type="password" placeholder="密码" autocomplete="current-password">
+    <button onclick="doLogin()">登 录</button>
+  </div>
+</div>
+
+<!-- 主视图 -->
+<div id="main-view" class="hidden">
+  <header>
+    <h1>aiChatBot 管理后台</h1>
+    <button onclick="logout()">退出登录</button>
+  </header>
+  <main>
+    <div class="cards">
+      <div class="card"><div class="num" id="st-users">-</div><div class="label">用户总数</div></div>
+      <div class="card"><div class="num" id="st-msgs">-</div><div class="label">消息总数</div></div>
+      <div class="card"><div class="num" id="st-today">-</div><div class="label">今日消息</div></div>
+    </div>
+    <section>
+      <h2>模型用量（assistant 消息数）</h2>
+      <table><thead><tr><th>模型</th><th>消息数</th></tr></thead>
+        <tbody id="model-rows"></tbody></table>
+    </section>
+    <section>
+      <h2>用户列表</h2>
+      <table>
+        <thead><tr><th>Telegram ID</th><th>用户名</th><th>显示名</th><th>偏好模型</th><th>消息数</th><th>最近活跃</th></tr></thead>
+        <tbody id="user-rows"></tbody>
+      </table>
+    </section>
+  </main>
+</div>
+
+<script>
+const TOKEN_KEY = 'admin_token';
+const api = (path) => fetch('/api' + path, { headers: { Authorization: 'Bearer ' + localStorage.getItem(TOKEN_KEY) } });
+
+async function doLogin() {
+  const err = document.getElementById('err');
+  err.textContent = '';
+  const resp = await fetch('/api/login', {
+    method: 'POST', headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({
+      username: document.getElementById('username').value,
+      password: document.getElementById('password').value,
+    }),
+  });
+  if (!resp.ok) { err.textContent = (await resp.json()).detail || '登录失败'; return; }
+  localStorage.setItem(TOKEN_KEY, (await resp.json()).token);
+  showMain();
+}
+
+function logout() { localStorage.removeItem(TOKEN_KEY); location.reload(); }
+
+function esc(s) { const d = document.createElement('div'); d.textContent = s == null ? '' : String(s); return d.innerHTML; }
+
+async function loadData() {
+  const statsResp = await api('/stats');
+  if (statsResp.status === 401) { logout(); return; }
+  const stats = await statsResp.json();
+  document.getElementById('st-users').textContent = stats.total_users;
+  document.getElementById('st-msgs').textContent = stats.total_messages;
+  document.getElementById('st-today').textContent = stats.today_messages;
+  document.getElementById('model-rows').innerHTML =
+    Object.entries(stats.messages_by_model).map(([m, c]) => `<tr><td>${esc(m)}</td><td>${c}</td></tr>`).join('');
+
+  const users = await (await api('/users')).json();
+  document.getElementById('user-rows').innerHTML = users.map(u => `
+    <tr><td>${u.telegram_id}</td><td>${esc(u.username ? '@' + u.username : '-')}</td>
+    <td>${esc(u.first_name)}</td><td>${esc(u.preferred_model || '默认')}</td>
+    <td>${u.message_count}</td><td>${esc(u.last_active || '-')}</td></tr>`).join('');
+}
+
+function showMain() {
+  document.getElementById('login-view').classList.add('hidden');
+  document.getElementById('main-view').classList.remove('hidden');
+  loadData();
+}
+
+// 已有令牌则直接进入主视图
+if (localStorage.getItem(TOKEN_KEY)) showMain();
+document.addEventListener('keydown', e => {
+  if (e.key === 'Enter' && !document.getElementById('login-view').classList.contains('hidden')) doLogin();
+});
+</script>
+</body>
+</html>
