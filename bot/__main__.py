@@ -5,7 +5,7 @@ import sys
 from aiogram import Bot, Dispatcher
 from aiogram.client.default import DefaultBotProperties
 from aiogram.enums import ParseMode
-from aiogram.types import ErrorEvent
+from aiogram.types import BotCommand, ErrorEvent
 
 from bot.handlers import router
 from core.config import get_settings
@@ -41,6 +41,18 @@ async def main() -> None:
         return True
 
     await bot.delete_webhook(drop_pending_updates=True)
+
+    # 注册 Telegram 命令菜单（输入框左侧菜单按钮）
+    await bot.set_my_commands(
+        [
+            BotCommand(command="start", description="开始使用"),
+            BotCommand(command="new", description="开启新对话（清空上下文）"),
+            BotCommand(command="model", description="查看/切换模型"),
+            BotCommand(command="help", description="显示帮助"),
+        ]
+    )
+    logger.info("命令菜单已注册")
+
     logger.info("bot-api 已启动，Long Polling 运行中……")
     try:
         await dp.start_polling(bot)
