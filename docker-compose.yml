@@ -1,0 +1,64 @@
+# aiChatBot 服务编排
+# 使用前提：
+#   1. 准备好 .env（参照 .env.example，填入 TELEGRAM_BOT_TOKEN、LLM_API_KEY 等）
+#   2. LLM_BASE_URL 指向 RouterHub：容器内访问宿主机服务用 host.docker.internal
+#      （compose 已注入默认值 http://host.docker.internal:8000/v1，可被 .env 覆盖）
+# 启动：docker compose up -d --build
+
+services:
+  agent:
+    build: .
+    image: aichatbot:latest
+    container_name: aichatbot-agent
+    command: ["uv", "run", "--no-sync", "python", "-m", "agent"]
+    ports:
+      - "8100:8100"
+    env_file: .env
+    environment:
+      # 容器间通过服务名互访；覆盖 .env 中的本机回环地址
+      AGENT_BASE_URL: http://agent:8100
+      AGENT_LISTEN_ADDR: 0.0.0.0:8100
+      # RouterHub 运行在宿主机时的默认地址（.env 中已配置则以其为准）
+      LLM_BASE_URL: ${LLM_BASE_URL:-http://host.docker.internal:8000/v1}
+    volumes:
+      - ./data:/app/data          # SQLite 数据持久化
+    extra_hosts:
+      - "host.docker.internal:host-gateway"   # Linux 兼容宿主机访问
+    healthcheck:
+      test: ["CMD", "python", "-c",
+             "import urllib.request;urllib.request.urlopen('http://127.0.0.1:8100/health', timeout=3)"]
+      interval: 15s
+      timeout: 5s
+      retries: 5
+      start_period: 10s
+    restart: unless-stopped
+
+  bot:
+    image: aichatbot:latest       # 复用 agent 构建的镜像
+    container_name: aichatbot-bot
+    command: ["uv", "run", "--no-sync", "python", "-m", "bot"]
+    env_file: .env
+    environment:
+      AGENT_BASE_URL: http://agent:8100
+      LLM_BASE_URL: ${LLM_BASE_URL:-http://host.docker.internal:8000/v1}
+    extra_hosts:
+      - "host.docker.internal:host-gateway"
+    depends_on:
+      agent:
+        condition: service_healthy
+    restart: unless-stopped
+
+  admin:
+    image: aichatbot:latest
+    container_name: aichatbot-admin
+    command: ["uv", "run", "--no-sync", "python", "-m", "admin"]
+    ports:
+      - "8200:8200"
+    env_file: .env
+    environment:
+      AGENT_BASE_URL: http://agent:8100
+      ADMIN_LISTEN_ADDR: 0.0.0.0:8200
+    depends_on:
+      agent:
+        condition: service_healthy
+    restart: unless-stopped
