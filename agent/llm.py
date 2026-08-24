@@ -31,11 +31,14 @@ class LLMClient:
             timeout=settings.llm_timeout,
         )
 
-    async def chat(self, messages: list[dict[str, str]]) -> str:
-        """发送 messages（含 system prompt 与历史），返回助手回复文本。"""
+    async def chat(self, messages: list[dict[str, str]], model: str | None = None) -> str:
+        """发送 messages（含 system prompt 与历史），返回助手回复文本。
+
+        model 为空时使用全局默认模型。
+        """
         try:
             resp = await self._client.chat.completions.create(
-                model=self._settings.llm_model,
+                model=model or self._settings.llm_model,
                 messages=messages,  # type: ignore[arg-type]
             )
             content = resp.choices[0].message.content

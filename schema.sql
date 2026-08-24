@@ -3,11 +3,12 @@
 
 -- Telegram 用户表
 CREATE TABLE IF NOT EXISTS users (
-    id           INTEGER PRIMARY KEY AUTOINCREMENT,
-    telegram_id  INTEGER NOT NULL UNIQUE,          -- Telegram 用户 ID
-    username     TEXT,                             -- @用户名（可变更）
-    first_name   TEXT,                             -- 显示名
-    created_at   TEXT NOT NULL DEFAULT (datetime('now', 'localtime'))
+    id              INTEGER PRIMARY KEY AUTOINCREMENT,
+    telegram_id     INTEGER NOT NULL UNIQUE,       -- Telegram 用户 ID
+    username        TEXT,                          -- @用户名（可变更）
+    first_name      TEXT,                          -- 显示名
+    preferred_model TEXT,                          -- 用户偏好模型（空则用全局默认）
+    created_at      TEXT NOT NULL DEFAULT (datetime('now', 'localtime'))
 );
 
 -- 会话消息表（多轮上下文）

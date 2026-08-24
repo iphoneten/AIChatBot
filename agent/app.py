@@ -9,6 +9,7 @@ from fastapi.responses import JSONResponse
 
 from agent.llm import LLMClient
 from agent.routes import create_router
+from agent.session import SessionStore
 from core.config import get_settings
 from core.logging import setup_logging
 
@@ -26,6 +27,11 @@ async def init_db() -> None:
     db_path.parent.mkdir(parents=True, exist_ok=True)
     async with aiosqlite.connect(db_path) as db:
         await db.executescript(_SCHEMA_PATH.read_text(encoding="utf-8"))
+        # 兼容旧库：users.preferred_model 列已存在时忽略报错
+        try:
+            await db.execute("ALTER TABLE users ADD COLUMN preferred_model TEXT")
+        except aiosqlite.OperationalError:
+            pass
         await db.commit()
     logger.info(f"数据库就绪：{db_path}")
 
@@ -58,6 +64,6 @@ def create_app() -> FastAPI:
     async def health() -> dict[str, str]:
         return {"status": "ok", "service": "ai-agent"}
 
-    app.include_router(create_router(app.state.llm))
+    app.include_router(create_router(app.state.llm, SessionStore(settings.db_path)))
 
     return app
