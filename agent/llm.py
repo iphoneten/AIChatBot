@@ -122,6 +122,47 @@ class LLMClient:
 
         return await self._call_with_retry(do, use_model)
 
+    async def chat_stream(
+        self, messages: list[dict[str, str]], model: str | None = None
+    ):
+        """流式对话：逐段产出文本增量。
+
+        重试语义与 chat 一致，但仅在首个增量产出前有效；
+        输出中断（已产出部分内容）时直接失败，由调用方决定如何收尾。
+        """
+        use_model = model or self._settings.llm_model
+        max_attempts = max(1, self._settings.llm_max_retries)
+        for attempt in range(1, max_attempts + 1):
+            produced = False
+            try:
+                stream = await self._client.chat.completions.create(
+                    model=use_model,
+                    messages=messages,  # type: ignore[arg-type]
+                    stream=True,
+                )
+                async for chunk in stream:
+                    if not chunk.choices:
+                        continue
+                    delta = chunk.choices[0].delta.content
+                    if delta:
+                        produced = True
+                        yield delta
+                return
+            except Exception as e:  # noqa: BLE001 - 统一分类处理
+                if produced:
+                    logger.warning(f"LLM 流式输出中断（model={use_model}）：{type(e).__name__}")
+                    raise LLMError("模型输出中断，请重新发送。") from None
+                if attempt < max_attempts and _is_transient(e):
+                    delay = 2 ** (attempt - 1)
+                    logger.warning(
+                        f"LLM 瞬态错误（第 {attempt}/{max_attempts} 次，{delay}s 后重试）："
+                        f"{type(e).__name__}"
+                    )
+                    await asyncio.sleep(delay)
+                    continue
+                logger.warning(f"LLM 流式调用最终失败（model={use_model}）：{type(e).__name__}: {e}")
+                raise LLMError(self._hint_for(e)) from None
+
     async def list_models(self) -> list[str]:
         """从 RouterHub 拉取可用模型列表（GET /v1/models）。"""
 

@@ -1,5 +1,7 @@
 """ai-agent 内部 REST 客户端（httpx 异步）。"""
 
+import json
+from collections.abc import AsyncIterator
 from typing import Self
 
 import httpx
@@ -7,6 +9,10 @@ import httpx
 from core.logging import setup_logging
 
 logger = setup_logging("bot-api")
+
+
+class AgentError(Exception):
+    """agent 调用失败，message 为面向用户的中文提示。"""
 
 
 class AgentClient:
@@ -56,6 +62,42 @@ class AgentClient:
         except (httpx.HTTPError, KeyError) as e:
             logger.warning(f"agent 对话调用失败：{e}")
             return None
+
+    async def chat_stream(
+        self,
+        telegram_id: int,
+        chat_id: int,
+        text: str,
+        username: str | None = None,
+        first_name: str | None = None,
+    ) -> AsyncIterator[str]:
+        """流式对话：逐段产出文本增量；失败抛出 AgentError。"""
+        body = {
+            "telegram_id": telegram_id,
+            "chat_id": chat_id,
+            "text": text,
+            "username": username,
+            "first_name": first_name,
+        }
+        try:
+            async with self._client.stream("POST", "/chat/stream", json=body) as resp:
+                if resp.status_code != 200:
+                    detail = (await resp.json()).get("detail", "AI 服务暂时不可用")
+                    raise AgentError(str(detail))
+                async for line in resp.aiter_lines():
+                    if not line.startswith("data:"):
+                        continue
+                    payload = json.loads(line[5:].strip())
+                    if payload.get("error"):
+                        raise AgentError(str(payload["error"]))
+                    if payload.get("done"):
+                        break
+                    delta = payload.get("delta")
+                    if delta:
+                        yield str(delta)
+        except httpx.HTTPError as e:
+            logger.warning(f"agent 流式调用失败：{e}")
+            raise AgentError("AI 服务暂时不可用，请稍后重试。") from None
 
     async def register(self, telegram_id: int, username: str | None, first_name: str | None) -> None:
         """注册/更新用户（/start 命令）。"""

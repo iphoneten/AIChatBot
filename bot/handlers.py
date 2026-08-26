@@ -1,15 +1,20 @@
 """Telegram 命令与消息处理器。"""
 
 import logging
+import time
 
 from aiogram import F, Router
 from aiogram.filters import Command, CommandStart
 from aiogram.types import Message
 
-from bot.agent_api import AgentClient
+from bot.agent_api import AgentClient, AgentError
 from core.config import get_settings
 
 router = Router(name="main")
+
+# 流式渲染参数
+_EDIT_INTERVAL = 1.5   # 编辑消息最小间隔（秒），规避 Telegram 限频
+_SEGMENT_LIMIT = 4000  # 单条消息分段长度（Telegram 上限 4096，留余量）
 
 HELP_TEXT = (
     "可用命令：\n"
@@ -76,23 +81,66 @@ async def cmd_model(message: Message) -> None:
 
 @router.message(F.text)
 async def on_text(message: Message) -> None:
-    """普通文本消息 → 经 ai-agent 调用大模型并回复。"""
+    """普通文本消息 → 经 ai-agent 流式调用大模型，编辑消息模拟打字效果。"""
     # 打字状态为尽力而为：失败不阻塞对话
     try:
         await message.bot.send_chat_action(chat_id=message.chat.id, action="typing")
-    except Exception as e:  # noqa: BLE001 - 状态提示失败仅记录日志
+    except Exception as e:  # noqa: BLE001 - 任意网络异常都不应阻塞对话
         logging.getLogger(__name__).warning(f"发送 typing 状态失败：{e}")
+
     user = message.from_user
+    placeholder = await message.answer("思考中…")
+    buf = ""
+    last_edit = 0.0
+
     async with _client() as client:
-        reply = await client.chat(
-            telegram_id=user.id,
-            chat_id=message.chat.id,
-            text=message.text or "",
-            username=user.username,
-            first_name=user.first_name,
-        )
-    if reply:
-        for i in range(0, len(reply), 4000):  # Telegram 上限 4096 字符
-            await message.answer(reply[i : i + 4000])
-    else:
-        await message.answer("抱歉，AI 服务暂时不可用，请稍后重试。")
+        try:
+            async for delta in client.chat_stream(
+                telegram_id=user.id,
+                chat_id=message.chat.id,
+                text=message.text or "",
+                username=user.username,
+                first_name=user.first_name,
+            ):
+                buf += delta
+                now = time.monotonic()
+                # 节流编辑（Telegram 限频约 1 次/秒）；接近单条上限时停止编辑，
+                # 剩余内容在收尾阶段按分段发出
+                if now - last_edit >= _EDIT_INTERVAL and len(buf) < _SEGMENT_LIMIT - 200:
+                    await _safe_edit(placeholder, f"{buf} ▌")
+                    last_edit = now
+        except AgentError as e:
+            text = str(e)
+            if not buf:  # 尚无部分输出：占位消息直接改为错误提示
+                await _safe_edit(placeholder, text)
+                return
+            text = f"{buf}\n\n⚠ {text}"
+            await _finalize(message, placeholder, text)
+            return
+
+    await _finalize(message, placeholder, buf)
+
+
+async def _finalize(message: Message, placeholder: Message, full_text: str) -> None:
+    """收尾：把完整回复按 Telegram 长度上限分段落定到消息中。"""
+    if not full_text.strip():
+        await _safe_edit(placeholder, "（模型返回了空回复，请重试）")
+        return
+    pos = 0
+    first = True
+    while pos < len(full_text):
+        seg = full_text[pos : pos + _SEGMENT_LIMIT]
+        if first:
+            await _safe_edit(placeholder, seg)
+            first = False
+        else:
+            await message.answer(seg)
+        pos += _SEGMENT_LIMIT
+
+
+async def _safe_edit(msg: Message, text: str) -> None:
+    """编辑消息：忽略"内容未变化"等无害错误。"""
+    try:
+        await msg.edit_text(text)
+    except Exception as e:  # noqa: BLE001 - 编辑失败不应中断流式渲染
+        logging.getLogger(__name__).debug(f"编辑消息跳过：{e}")

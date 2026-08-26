@@ -1,6 +1,9 @@
 """ai-agent 内部 REST API 路由。"""
 
+import json
+
 from fastapi import APIRouter, HTTPException
+from fastapi.responses import StreamingResponse
 from pydantic import BaseModel, Field
 
 from agent.llm import LLMClient, LLMError
@@ -85,6 +88,42 @@ def create_router(llm: LLMClient, store: SessionStore) -> APIRouter:
         """注册/更新用户（对应 Bot 的 /start 命令）。"""
         await store.ensure_user(req.telegram_id, req.username, req.first_name)
         return {"ok": True}
+
+    @router.post("/chat/stream")
+    async def chat_stream(req: ChatRequest) -> StreamingResponse:
+        """流式多轮对话：以 SSE 返回增量，事件为 {"delta"} / {"error"} / {"done"}。
+
+        仅在完整生成成功时持久化本轮消息。
+        """
+        settings = get_settings()
+        await store.ensure_user(req.telegram_id, req.username, req.first_name)
+        model = (await store.get_preferred_model(req.telegram_id)) or settings.llm_model
+        history = await store.get_history(req.telegram_id, req.chat_id, settings.max_context_messages)
+        messages = [{"role": "system", "content": settings.system_prompt}, *history, {"role": "user", "content": req.text}]
+
+        async def generate():
+            parts: list[str] = []
+            try:
+                async for delta in llm.chat_stream(messages, model=model):
+                    parts.append(delta)
+                    yield f"data: {json.dumps({'delta': delta}, ensure_ascii=False)}\n\n"
+            except LLMError as e:
+                yield f"data: {json.dumps({'error': str(e)}, ensure_ascii=False)}\n\n"
+                return
+            reply = "".join(parts)
+            await store.append_messages(
+                req.telegram_id,
+                req.chat_id,
+                [
+                    {"role": "user", "content": req.text},
+                    {"role": "assistant", "content": reply},
+                ],
+                model=model,
+            )
+            logger.info(f"chat/stream: user={req.telegram_id} model={model} history={len(history)} len={len(reply)}")
+            yield f"data: {json.dumps({'done': True})}\n\n"
+
+        return StreamingResponse(generate(), media_type="text/event-stream")
 
     @router.post("/sessions/clear")
     async def clear_session(req: ClearRequest) -> dict[str, int]:
