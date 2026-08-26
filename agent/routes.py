@@ -10,7 +10,6 @@ from agent.llm import LLMClient, LLMError
 from agent.session import SessionStore
 from core.config import get_settings
 from core.logging import setup_logging
-from core.personas import get_persona, list_personas
 
 logger = setup_logging("ai-agent")
 
@@ -61,6 +60,14 @@ class SetRoleRequest(BaseModel):
     role: str = Field(min_length=1)
 
 
+class UpsertRoleRequest(BaseModel):
+    """管理后台新增/更新人设请求体。"""
+
+    name: str = Field(min_length=1, max_length=50)
+    description: str = Field(default="", max_length=200)
+    prompt: str = Field(min_length=1, max_length=8000)
+
+
 async def _system_prompt_for(store: SessionStore, telegram_id: int) -> tuple[str, str]:
     """取用户生效的人设，返回 (prompt, 角色名)。
 
@@ -69,10 +76,10 @@ async def _system_prompt_for(store: SessionStore, telegram_id: int) -> tuple[str
     settings = get_settings()
     preferred = await store.get_preferred_role(telegram_id)
     if preferred:
-        persona = get_persona(preferred)
+        persona = await store.get_persona(preferred)
         if persona:
-            return persona.prompt, persona.name
-        # 人设可能已被配置文件移除，回退默认
+            return persona["prompt"], str(persona["name"])
+        # 人设可能已被后台删除，回退默认
         logger.warning(f"用户 {telegram_id} 的角色 '{preferred}' 不存在，回退默认人设")
     return settings.system_prompt, "默认"
 
@@ -189,7 +196,8 @@ def create_router(llm: LLMClient, store: SessionStore) -> APIRouter:
     @router.get("/roles", response_model=list[dict])
     async def roles() -> list[dict]:
         """可用角色人设列表。"""
-        return [{"name": p.name, "description": p.description} for p in list_personas()]
+        personas = await store.list_personas()
+        return [{"name": p["name"], "description": p["description"]} for p in personas]
 
     @router.get("/roles/current")
     async def current_role(telegram_id: int) -> dict[str, str]:
@@ -201,13 +209,34 @@ def create_router(llm: LLMClient, store: SessionStore) -> APIRouter:
     async def select_role(req: SetRoleRequest) -> dict[str, str]:
         """设置用户偏好角色人设（校验角色存在）。"""
         await store.ensure_user(req.telegram_id, None, None)
-        persona = get_persona(req.role)
+        persona = await store.get_persona(req.role)
         if persona is None:
             raise HTTPException(status_code=400, detail=f"角色 '{req.role}' 不存在")
         ok = await store.set_preferred_role(req.telegram_id, req.role)
         if not ok:
             raise HTTPException(status_code=404, detail="用户不存在")
         return {"role": req.role}
+
+    @router.get("/admin/roles", response_model=list[dict])
+    async def admin_roles() -> list[dict]:
+        """全部人设详情（含 prompt，管理后台使用）。"""
+        return await store.list_personas()
+
+    @router.post("/admin/roles")
+    async def upsert_role(req: UpsertRoleRequest) -> dict[str, str]:
+        """新增/更新人设（管理后台使用，即时生效）。"""
+        await store.upsert_persona(req.name, req.description, req.prompt)
+        logger.info(f"人设已保存：{req.name}")
+        return {"name": req.name}
+
+    @router.delete("/admin/roles/{name}")
+    async def delete_role(name: str) -> dict[str, bool]:
+        """删除人设（管理后台使用）；已选该人设的用户自动回退默认。"""
+        existed = await store.delete_persona(name)
+        if not existed:
+            raise HTTPException(status_code=404, detail="人设不存在")
+        logger.info(f"人设已删除：{name}")
+        return {"ok": True}
 
     @router.get("/admin/users", response_model=list[dict])
     async def admin_users() -> list[dict]:

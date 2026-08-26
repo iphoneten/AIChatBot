@@ -37,6 +37,13 @@
   .login-box button:hover { background: #1d4ed8; }
   #err { color: #dc2626; font-size: 13px; margin-bottom: 10px; min-height: 18px; text-align: center; }
   .hidden { display: none !important; }
+  .btn-mini { padding: 5px 12px; border: 1px solid #d1d5db; background: #fff;
+              border-radius: 6px; font-size: 12px; cursor: pointer; margin-right: 4px; }
+  .btn-mini:hover { background: #f3f4f6; }
+  .btn-primary { background: #2563eb; color: #fff; border-color: #2563eb; }
+  .btn-primary:hover { background: #1d4ed8; }
+  .btn-danger { color: #dc2626; border-color: #fca5a5; }
+  h2 button { float: right; }
 </style>
 </head>
 <body>
@@ -68,6 +75,26 @@
       <h2>模型用量（assistant 消息数）</h2>
       <table><thead><tr><th>模型</th><th>消息数</th></tr></thead>
         <tbody id="model-rows"></tbody></table>
+    </section>
+    <section>
+      <h2>角色人设
+        <button class="btn-mini" onclick="editRole()">+ 新增人设</button>
+      </h2>
+      <div id="role-form" class="hidden" style="margin-bottom:14px;">
+        <input id="role-name" placeholder="角色名（如：赛博诗人）" style="width:220px;">
+        <input id="role-desc" placeholder="一句话描述（列表展示用）" style="width:340px;">
+        <textarea id="role-prompt" rows="4" placeholder="人设 system prompt"
+                  style="width:100%;margin-top:8px;padding:8px;border:1px solid #d1d5db;border-radius:6px;font-size:13px;"></textarea>
+        <div style="margin-top:8px;">
+          <button class="btn-mini btn-primary" onclick="saveRole()">保存</button>
+          <button class="btn-mini" onclick="cancelEditRole()">取消</button>
+          <span id="role-msg" style="font-size:12px;color:#6b7280;margin-left:8px;"></span>
+        </div>
+      </div>
+      <table>
+        <thead><tr><th>角色名</th><th>描述</th><th style="width:130px;">操作</th></tr></thead>
+        <tbody id="role-rows"></tbody>
+      </table>
     </section>
     <section>
       <h2>用户列表</h2>
@@ -119,10 +146,77 @@ async function loadData() {
     <td>${u.message_count}</td><td>${esc(u.last_active || '-')}</td></tr>`).join('');
 }
 
+// ---------- 角色人设管理 ----------
+
+async function loadRoleList() {
+  const resp = await api('/roles');
+  if (resp.status === 401) { logout(); return; }
+  const roles = await resp.json();
+  document.getElementById('role-rows').innerHTML = roles.map(r => `
+    <tr><td><b>${esc(r.name)}</b></td><td>${esc(r.description)}</td>
+    <td>
+      <button class="btn-mini" onclick='editRole(${JSON.stringify(r.name)})'>编辑</button>
+      <button class="btn-mini btn-danger" onclick='deleteRole(${JSON.stringify(r.name)})'>删除</button>
+    </td></tr>`).join('');
+}
+
+let editingRole = null;  // 当前编辑中的角色名（null 表示新增）
+
+async function editRole(name) {
+  editingRole = name || null;
+  document.getElementById('role-form').classList.remove('hidden');
+  document.getElementById('role-msg').textContent = '';
+  if (name) {
+    const roles = await (await api('/roles')).json();
+    const role = roles.find(r => r.name === name);
+    document.getElementById('role-name').value = name;
+    document.getElementById('role-desc').value = role ? role.description : '';
+    document.getElementById('role-prompt').value = role ? role.prompt : '';
+  } else {
+    document.getElementById('role-name').value = '';
+    document.getElementById('role-desc').value = '';
+    document.getElementById('role-prompt').value = '';
+  }
+}
+
+function cancelEditRole() { document.getElementById('role-form').classList.add('hidden'); }
+
+async function saveRole() {
+  const msg = document.getElementById('role-msg');
+  const body = {
+    name: document.getElementById('role-name').value.trim(),
+    description: document.getElementById('role-desc').value.trim(),
+    prompt: document.getElementById('role-prompt').value.trim(),
+  };
+  if (!body.name || !body.prompt) { msg.textContent = '角色名与 prompt 不能为空'; return; }
+  // 编辑时改名：先删旧建新
+  if (editingRole && editingRole !== body.name) await deleteRoleSilently(editingRole);
+  const resp = await fetch('/api/roles', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json', Authorization: 'Bearer ' + localStorage.getItem(TOKEN_KEY) },
+    body: JSON.stringify(body),
+  });
+  msg.textContent = resp.ok ? '已保存，即时生效' : ((await resp.json()).detail || '保存失败');
+  if (resp.ok) { cancelEditRole(); loadRoleList(); }
+}
+
+async function deleteRole(name) {
+  if (!confirm(`确定删除人设「${name}」？使用该人设的用户将回退为默认助手。`)) return;
+  await deleteRoleSilently(name);
+  loadRoleList();
+}
+
+async function deleteRoleSilently(name) {
+  await fetch('/api/roles/' + encodeURIComponent(name), {
+    method: 'DELETE', headers: { Authorization: 'Bearer ' + localStorage.getItem(TOKEN_KEY) },
+  });
+}
+
 function showMain() {
   document.getElementById('login-view').classList.add('hidden');
   document.getElementById('main-view').classList.remove('hidden');
   loadData();
+  loadRoleList();
 }
 
 // 已有令牌则直接进入主视图

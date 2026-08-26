@@ -12,6 +12,15 @@ CREATE TABLE IF NOT EXISTS users (
     created_at      TEXT NOT NULL DEFAULT (datetime('now', 'localtime'))
 );
 
+-- 角色人设表（首次启动时从 personas.json 导入种子数据，此后以数据库为准）
+CREATE TABLE IF NOT EXISTS personas (
+    id          INTEGER PRIMARY KEY AUTOINCREMENT,
+    name        TEXT NOT NULL UNIQUE,              -- 角色名（用户 /role 切换时使用）
+    description TEXT NOT NULL DEFAULT '',          -- 一句话描述（列表展示用）
+    prompt      TEXT NOT NULL,                     -- 人设 system prompt
+    created_at  TEXT NOT NULL DEFAULT (datetime('now', 'localtime'))
+);
+
 -- 会话消息表（多轮上下文）
 CREATE TABLE IF NOT EXISTS messages (
     id            INTEGER PRIMARY KEY AUTOINCREMENT,

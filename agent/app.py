@@ -22,6 +22,8 @@ async def init_db() -> None:
     """启动时执行 schema.sql 建表（幂等，IF NOT EXISTS）。"""
     import aiosqlite
 
+    from core.personas import load_personas
+
     settings = get_settings()
     db_path = Path(settings.db_path)
     db_path.parent.mkdir(parents=True, exist_ok=True)
@@ -33,6 +35,17 @@ async def init_db() -> None:
                 await db.execute(f"ALTER TABLE users ADD COLUMN {column}")
             except aiosqlite.OperationalError:
                 pass
+        # 人设种子导入：仅当 personas 表为空时从 personas.json 导入一次
+        cursor = await db.execute("SELECT COUNT(*) FROM personas")
+        if (await cursor.fetchone())[0] == 0:
+            await db.executemany(
+                "INSERT INTO personas (name, description, prompt) VALUES (?, ?, ?)",
+                [
+                    (p.name, p.description, p.prompt)
+                    for p in load_personas().values()
+                ],
+            )
+            logger.info(f"已从 personas.json 导入 {len(load_personas())} 个默认人设")
         await db.commit()
     logger.info(f"数据库就绪：{db_path}")
 

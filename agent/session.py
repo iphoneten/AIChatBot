@@ -156,3 +156,55 @@ class SessionStore:
             )
             await db.commit()
         return (cursor.rowcount or 0) > 0
+
+    # ---------- 角色人设管理 ----------
+
+    async def list_personas(self) -> list[dict[str, Any]]:
+        """全部角色人设（按创建顺序）。"""
+        async with self._connect() as db:
+            db.row_factory = aiosqlite.Row
+            cursor = await db.execute(
+                "SELECT name, description, prompt FROM personas ORDER BY id"
+            )
+            rows: list[Any] = await cursor.fetchall()
+        return [dict(r) for r in rows]
+
+    async def get_persona(self, name: str) -> dict[str, Any] | None:
+        """按名称获取角色人设。"""
+        async with self._connect() as db:
+            db.row_factory = aiosqlite.Row
+            cursor = await db.execute(
+                "SELECT name, description, prompt FROM personas WHERE name = ?",
+                (name,),
+            )
+            row = await cursor.fetchone()
+        return dict(row) if row else None
+
+    async def upsert_persona(self, name: str, description: str, prompt: str) -> None:
+        """新增或更新角色人设。"""
+        async with self._connect() as db:
+            await db.execute(
+                """
+                INSERT INTO personas (name, description, prompt)
+                VALUES (?, ?, ?)
+                ON CONFLICT(name) DO UPDATE SET
+                    description = excluded.description,
+                    prompt = excluded.prompt
+                """,
+                (name, description, prompt),
+            )
+            await db.commit()
+
+    async def delete_persona(self, name: str) -> bool:
+        """删除角色人设，返回是否存在。"""
+        async with self._connect() as db:
+            cursor = await db.execute("DELETE FROM personas WHERE name = ?", (name,))
+            await db.commit()
+        return (cursor.rowcount or 0) > 0
+
+    async def count_personas(self) -> int:
+        """人设数量（用于种子导入判断）。"""
+        async with self._connect() as db:
+            cursor = await db.execute("SELECT COUNT(*) FROM personas")
+            row = await cursor.fetchone()
+        return row[0] if row else 0
