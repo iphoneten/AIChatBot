@@ -70,14 +70,19 @@ class AgentClient:
         text: str,
         username: str | None = None,
         first_name: str | None = None,
+        group: bool = False,
     ) -> AsyncIterator[str]:
-        """流式对话：逐段产出文本增量；失败抛出 AgentError。"""
+        """流式对话：逐段产出文本增量；失败抛出 AgentError。
+
+        group=True 时上下文按 chat_id 全群共享。
+        """
         body = {
             "telegram_id": telegram_id,
             "chat_id": chat_id,
             "text": text,
             "username": username,
             "first_name": first_name,
+            "group": group,
         }
         try:
             async with self._client.stream("POST", "/chat/stream", json=body) as resp:
@@ -119,12 +124,12 @@ class AgentClient:
         except httpx.HTTPError as e:
             logger.warning(f"用户注册失败：{e}")
 
-    async def clear_session(self, telegram_id: int, chat_id: int) -> bool:
-        """清空会话上下文（/new 命令）。"""
+    async def clear_session(self, telegram_id: int, chat_id: int, group: bool = False) -> bool:
+        """清空会话上下文（/new 命令）；group=True 时清空全群共享上下文。"""
         try:
             resp = await self._client.post(
                 "/sessions/clear",
-                json={"telegram_id": telegram_id, "chat_id": chat_id},
+                json={"telegram_id": telegram_id, "chat_id": chat_id, "group": group},
             )
             resp.raise_for_status()
             return True

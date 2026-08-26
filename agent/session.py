@@ -29,17 +29,26 @@ class SessionStore:
             )
             await db.commit()
 
-    async def get_history(self, telegram_id: int, chat_id: int, limit: int) -> list[dict[str, str]]:
-        """读取最近 limit 条历史（按时间正序返回）。"""
+    async def get_history(
+        self, telegram_id: int, chat_id: int, limit: int, shared: bool = False
+    ) -> list[dict[str, str]]:
+        """读取最近 limit 条历史（按时间正序返回）。
+
+        shared=True 时为群组共享上下文：仅按 chat_id 过滤，不限发言人。
+        """
         async with self._connect() as db:
             db.row_factory = aiosqlite.Row
+            where = "WHERE chat_id = ?" if shared else "WHERE telegram_id = ? AND chat_id = ?"
+            params: tuple[int, ...] = (
+                (chat_id, limit) if shared else (telegram_id, chat_id, limit)
+            )
             cursor = await db.execute(
-                """
+                f"""
                 SELECT role, content FROM messages
-                WHERE telegram_id = ? AND chat_id = ?
+                {where}
                 ORDER BY id DESC LIMIT ?
                 """,
-                (telegram_id, chat_id, limit),
+                params,
             )
             rows: list[Any] = await cursor.fetchall()
         return [{"role": r["role"], "content": r["content"]} for r in reversed(rows)]
@@ -59,13 +68,18 @@ class SessionStore:
             )
             await db.commit()
 
-    async def clear_history(self, telegram_id: int, chat_id: int) -> int:
-        """清空指定会话上下文，返回删除条数。"""
+    async def clear_history(self, telegram_id: int, chat_id: int, shared: bool = False) -> int:
+        """清空会话上下文（shared=True 为群组共享上下文），返回删除条数。"""
         async with self._connect() as db:
-            cursor = await db.execute(
-                "DELETE FROM messages WHERE telegram_id = ? AND chat_id = ?",
-                (telegram_id, chat_id),
-            )
+            if shared:
+                cursor = await db.execute(
+                    "DELETE FROM messages WHERE chat_id = ?", (chat_id,)
+                )
+            else:
+                cursor = await db.execute(
+                    "DELETE FROM messages WHERE telegram_id = ? AND chat_id = ?",
+                    (telegram_id, chat_id),
+                )
             await db.commit()
         return cursor.rowcount or 0
 

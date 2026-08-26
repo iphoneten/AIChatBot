@@ -4,6 +4,7 @@ import logging
 import time
 
 from aiogram import F, Router
+from aiogram.enums import ChatType
 from aiogram.filters import Command, CommandStart
 from aiogram.types import Message
 
@@ -23,7 +24,8 @@ HELP_TEXT = (
     "/new - 开启新对话（清空上下文）\n"
     "/model - 查看可用模型；/model 名称 - 切换模型\n"
     "/role - 查看角色人设；/role 名称 - 切换人设\n\n"
-    "直接发送文字即可与我对话，我会记住本次对话的上下文。"
+    "私聊直接发送文字即可对话。\n"
+    "群聊中 @我 或 回复我的消息 即可提问，全群共享上下文。"
 )
 
 
@@ -36,6 +38,40 @@ def _client():
 def _esc(text) -> str:
     """HTML 转义（用于拼接用户可见文本）。"""
     return str(text).replace("&", "&amp;").replace("<", "&lt;").replace(">", "&gt;")
+
+
+# bot 信息缓存（用户名用于群聊 @提及判定）
+_me_cache: dict[int, str] = {}
+
+
+async def _get_bot_username(bot) -> str:
+    """获取并缓存机器人用户名。"""
+    if bot.id not in _me_cache:
+        me = await bot.get_me()
+        _me_cache[bot.id] = me.username or ""
+    return _me_cache[bot.id]
+
+
+def _is_group(chat_type: str | None) -> bool:
+    return chat_type in (ChatType.GROUP, ChatType.SUPERGROUP)
+
+
+async def _should_reply(message: Message) -> bool:
+    """群聊触发判定：@机器人 或 回复机器人的消息；私聊恒响应。"""
+    if not _is_group(message.chat.type):
+        return True
+    text = message.text or ""
+    if f"@{await _get_bot_username(message.bot)}" in text:
+        return True
+    reply = message.reply_to_message
+    return bool(reply and reply.from_user and reply.from_user.id == message.bot.id)
+
+
+def _strip_mention(text: str, username: str) -> str:
+    """去掉群聊消息中的 @机器人 前缀/提及。"""
+    for token in (f"@{username}",):
+        text = text.replace(token, "")
+    return text.strip()
 
 
 @router.message(CommandStart())
@@ -57,10 +93,12 @@ async def cmd_help(message: Message) -> None:
 @router.message(Command("new"))
 async def cmd_new(message: Message) -> None:
     """清空会话上下文，开启新对话。"""
+    group = _is_group(message.chat.type)
     async with _client() as client:
-        ok = await client.clear_session(message.from_user.id, message.chat.id)
+        ok = await client.clear_session(message.from_user.id, message.chat.id, group=group)
     if ok:
-        await message.answer("已开启新对话，之前的上下文已清空。")
+        scope = "本群" if group else ""
+        await message.answer(f"已开启新对话，{scope}之前的上下文已清空。")
     else:
         await message.answer("操作失败，请稍后重试。")
 
@@ -109,7 +147,14 @@ async def cmd_role(message: Message) -> None:
 
 @router.message(F.text)
 async def on_text(message: Message) -> None:
-    """普通文本消息 → 经 ai-agent 流式调用大模型，编辑消息模拟打字效果。"""
+    """文本消息 → 经 ai-agent 流式调用大模型。
+
+    群聊中仅响应 @机器人 或 回复机器人 的消息，上下文全群共享。
+    """
+    if not await _should_reply(message):
+        return  # 群聊非触发消息，忽略
+    group = _is_group(message.chat.type)
+
     # 打字状态为尽力而为：失败不阻塞对话
     try:
         await message.bot.send_chat_action(chat_id=message.chat.id, action="typing")
@@ -117,6 +162,9 @@ async def on_text(message: Message) -> None:
         logging.getLogger(__name__).warning(f"发送 typing 状态失败：{e}")
 
     user = message.from_user
+    text = message.text or ""
+    if group:
+        text = _strip_mention(text, await _get_bot_username(message.bot)) or "请继续"
     placeholder = await message.answer("思考中…")
     buf = ""
     last_edit = 0.0
@@ -126,9 +174,10 @@ async def on_text(message: Message) -> None:
             async for delta in client.chat_stream(
                 telegram_id=user.id,
                 chat_id=message.chat.id,
-                text=message.text or "",
+                text=text,
                 username=user.username,
                 first_name=user.first_name,
+                group=group,
             ):
                 buf += delta
                 now = time.monotonic()

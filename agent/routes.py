@@ -22,6 +22,7 @@ class ChatRequest(BaseModel):
     text: str = Field(min_length=1, max_length=8000)
     username: str | None = None
     first_name: str | None = None
+    group: bool = False  # 群组对话：上下文按 chat_id 共享
 
 
 class ChatResponse(BaseModel):
@@ -36,6 +37,7 @@ class ClearRequest(BaseModel):
 
     telegram_id: int = Field(gt=0)
     chat_id: int
+    group: bool = False
 
 
 class SetModelRequest(BaseModel):
@@ -168,7 +170,9 @@ def create_router(llm: LLMClient, store: SessionStore) -> APIRouter:
 
         system_prompt, _role_name = await _system_prompt_for(store, req.telegram_id)
         model = await _resolve_model(llm, store, req.telegram_id)
-        history = await store.get_history(req.telegram_id, req.chat_id, settings.max_context_messages)
+        history = await store.get_history(
+            req.telegram_id, req.chat_id, settings.max_context_messages, shared=req.group
+        )
         messages = [{"role": "system", "content": system_prompt}, *history, {"role": "user", "content": req.text}]
 
         try:
@@ -205,7 +209,9 @@ def create_router(llm: LLMClient, store: SessionStore) -> APIRouter:
         await check_user_allowed(store, req.telegram_id)
         system_prompt, _role_name = await _system_prompt_for(store, req.telegram_id)
         model = await _resolve_model(llm, store, req.telegram_id)
-        history = await store.get_history(req.telegram_id, req.chat_id, settings.max_context_messages)
+        history = await store.get_history(
+            req.telegram_id, req.chat_id, settings.max_context_messages, shared=req.group
+        )
         messages = [{"role": "system", "content": system_prompt}, *history, {"role": "user", "content": req.text}]
 
         async def generate():
@@ -235,7 +241,7 @@ def create_router(llm: LLMClient, store: SessionStore) -> APIRouter:
     @router.post("/sessions/clear")
     async def clear_session(req: ClearRequest) -> dict[str, int]:
         """清空指定会话的上下文（对应 Bot 的 /new 命令）。"""
-        deleted = await store.clear_history(req.telegram_id, req.chat_id)
+        deleted = await store.clear_history(req.telegram_id, req.chat_id, shared=req.group)
         logger.info(f"clear: user={req.telegram_id} 删除 {deleted} 条")
         return {"deleted": deleted}
 
