@@ -44,6 +44,13 @@
   .btn-primary:hover { background: #1d4ed8; }
   .btn-danger { color: #dc2626; border-color: #fca5a5; }
   h2 button { float: right; }
+  /* Tab 导航 */
+  .tabs { display: flex; gap: 4px; margin-bottom: 20px; background: #fff;
+          border-radius: 10px; padding: 6px; box-shadow: 0 1px 3px rgba(0,0,0,.08); }
+  .tab { flex: 0 0 auto; padding: 9px 22px; border-radius: 7px; font-size: 14px;
+         color: #6b7280; cursor: pointer; user-select: none; text-align: center; }
+  .tab:hover { color: #2563eb; }
+  .tab.active { background: #2563eb; color: #fff; font-weight: 600; }
 </style>
 </head>
 <body>
@@ -66,43 +73,62 @@
     <button onclick="logout()">退出登录</button>
   </header>
   <main>
-    <div class="cards">
-      <div class="card"><div class="num" id="st-users">-</div><div class="label">用户总数</div></div>
-      <div class="card"><div class="num" id="st-msgs">-</div><div class="label">消息总数</div></div>
-      <div class="card"><div class="num" id="st-today">-</div><div class="label">今日消息</div></div>
+    <div class="tabs">
+      <div class="tab active" data-tab="stats" onclick="switchTab('stats')">📊 统计</div>
+      <div class="tab" data-tab="users" onclick="switchTab('users')">👥 用户</div>
+      <div class="tab" data-tab="roles" onclick="switchTab('roles')">🎭 角色人设</div>
     </div>
-    <section>
-      <h2>模型用量（assistant 消息数）</h2>
-      <table><thead><tr><th>模型</th><th>消息数</th></tr></thead>
-        <tbody id="model-rows"></tbody></table>
-    </section>
-    <section>
-      <h2>角色人设
-        <button class="btn-mini" onclick="editRole()">+ 新增人设</button>
-      </h2>
-      <div id="role-form" class="hidden" style="margin-bottom:14px;">
-        <input id="role-name" placeholder="角色名（如：赛博诗人）" style="width:220px;">
-        <input id="role-desc" placeholder="一句话描述（列表展示用）" style="width:340px;">
-        <textarea id="role-prompt" rows="4" placeholder="人设 system prompt"
-                  style="width:100%;margin-top:8px;padding:8px;border:1px solid #d1d5db;border-radius:6px;font-size:13px;"></textarea>
-        <div style="margin-top:8px;">
-          <button class="btn-mini btn-primary" onclick="saveRole()">保存</button>
-          <button class="btn-mini" onclick="cancelEditRole()">取消</button>
-          <span id="role-msg" style="font-size:12px;color:#6b7280;margin-left:8px;"></span>
-        </div>
+
+    <!-- Tab：统计概览 -->
+    <div class="tab-panel" id="panel-stats">
+      <div class="cards">
+        <div class="card"><div class="num" id="st-users">-</div><div class="label">用户总数</div></div>
+        <div class="card"><div class="num" id="st-msgs">-</div><div class="label">消息总数</div></div>
+        <div class="card"><div class="num" id="st-today">-</div><div class="label">今日消息</div></div>
       </div>
-      <table>
-        <thead><tr><th>角色名</th><th>描述</th><th style="width:130px;">操作</th></tr></thead>
-        <tbody id="role-rows"></tbody>
-      </table>
-    </section>
-    <section>
-      <h2>用户列表</h2>
-      <table>
-        <thead><tr><th>Telegram ID</th><th>用户名</th><th>显示名</th><th>偏好模型</th><th>消息数</th><th>最近活跃</th></tr></thead>
-        <tbody id="user-rows"></tbody>
-      </table>
-    </section>
+      <section>
+        <h2>模型用量（assistant 消息数）</h2>
+        <table><thead><tr><th>模型</th><th>消息数</th></tr></thead>
+          <tbody id="model-rows"></tbody></table>
+      </section>
+    </div>
+
+    <!-- Tab：用户管理 -->
+    <div class="tab-panel hidden" id="panel-users">
+      <section>
+        <h2>用户列表
+          <button class="btn-mini" onclick="loadData(true)">刷新</button>
+        </h2>
+        <table>
+          <thead><tr><th>Telegram ID</th><th>用户名</th><th>显示名</th><th>偏好模型</th><th>消息数</th><th>最近活跃</th></tr></thead>
+          <tbody id="user-rows"></tbody>
+        </table>
+      </section>
+    </div>
+
+    <!-- Tab：角色人设 -->
+    <div class="tab-panel hidden" id="panel-roles">
+      <section>
+        <h2>角色人设
+          <button class="btn-mini" onclick="editRole()">+ 新增人设</button>
+        </h2>
+        <div id="role-form" class="hidden" style="margin-bottom:14px;">
+          <input id="role-name" placeholder="角色名（如：赛博诗人）" style="width:220px;">
+          <input id="role-desc" placeholder="一句话描述（列表展示用）" style="width:340px;">
+          <textarea id="role-prompt" rows="4" placeholder="人设 system prompt"
+                    style="width:100%;margin-top:8px;padding:8px;border:1px solid #d1d5db;border-radius:6px;font-size:13px;"></textarea>
+          <div style="margin-top:8px;">
+            <button class="btn-mini btn-primary" onclick="saveRole()">保存</button>
+            <button class="btn-mini" onclick="cancelEditRole()">取消</button>
+            <span id="role-msg" style="font-size:12px;color:#6b7280;margin-left:8px;"></span>
+          </div>
+        </div>
+        <table>
+          <thead><tr><th>角色名</th><th>描述</th><th style="width:130px;">操作</th></tr></thead>
+          <tbody id="role-rows"></tbody>
+        </table>
+      </section>
+    </div>
   </main>
 </div>
 
@@ -129,7 +155,7 @@ function logout() { localStorage.removeItem(TOKEN_KEY); location.reload(); }
 
 function esc(s) { const d = document.createElement('div'); d.textContent = s == null ? '' : String(s); return d.innerHTML; }
 
-async function loadData() {
+async function loadData(force) {
   const statsResp = await api('/stats');
   if (statsResp.status === 401) { logout(); return; }
   const stats = await statsResp.json();
@@ -144,6 +170,21 @@ async function loadData() {
     <tr><td>${u.telegram_id}</td><td>${esc(u.username ? '@' + u.username : '-')}</td>
     <td>${esc(u.first_name)}</td><td>${esc(u.preferred_model || '默认')}</td>
     <td>${u.message_count}</td><td>${esc(u.last_active || '-')}</td></tr>`).join('');
+}
+
+// ---------- Tab 切换（各 Tab 数据按需加载） ----------
+
+const tabLoaders = {
+  stats: () => loadData(),
+  users: () => loadData(),
+  roles: () => loadRoleList(),
+};
+
+function switchTab(name) {
+  document.querySelectorAll('.tab').forEach(t => t.classList.toggle('active', t.dataset.tab === name));
+  document.querySelectorAll('.tab-panel').forEach(p => p.classList.add('hidden'));
+  document.getElementById('panel-' + name).classList.remove('hidden');
+  if (tabLoaders[name]) tabLoaders[name]();
 }
 
 // ---------- 角色人设管理 ----------
@@ -215,8 +256,7 @@ async function deleteRoleSilently(name) {
 function showMain() {
   document.getElementById('login-view').classList.add('hidden');
   document.getElementById('main-view').classList.remove('hidden');
-  loadData();
-  loadRoleList();
+  switchTab('stats');  // 默认进入统计页
 }
 
 // 已有令牌则直接进入主视图
