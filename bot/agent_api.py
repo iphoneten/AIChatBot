@@ -82,7 +82,12 @@ class AgentClient:
         try:
             async with self._client.stream("POST", "/chat/stream", json=body) as resp:
                 if resp.status_code != 200:
-                    detail = (await resp.json()).get("detail", "AI 服务暂时不可用")
+                    # 流式上下文中需先 aread() 才能读取响应体
+                    raw = await resp.aread()
+                    try:
+                        detail = json.loads(raw).get("detail", "AI 服务暂时不可用")
+                    except (json.JSONDecodeError, AttributeError):
+                        detail = "AI 服务暂时不可用"
                     raise AgentError(str(detail))
                 async for line in resp.aiter_lines():
                     if not line.startswith("data:"):
