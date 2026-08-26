@@ -4,6 +4,7 @@ import sys
 
 from aiogram import Bot, Dispatcher
 from aiogram.client.default import DefaultBotProperties
+from aiogram.client.session.aiohttp import AiohttpSession
 from aiogram.enums import ParseMode
 from aiogram.types import BotCommand, ErrorEvent
 
@@ -20,8 +21,13 @@ async def main() -> None:
         print("错误：未配置 TELEGRAM_BOT_TOKEN，请在 .env 中填写后重试。")
         sys.exit(1)
 
+    # 配置了代理时经代理访问 Telegram API（网络受限环境必需）
+    session = (
+        AiohttpSession(proxy=settings.telegram_proxy) if settings.telegram_proxy else None
+    )
     bot = Bot(
         token=settings.telegram_bot_token,
+        session=session,
         default=DefaultBotProperties(parse_mode=ParseMode.HTML),
     )
     dp = Dispatcher()

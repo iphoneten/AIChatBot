@@ -16,6 +16,7 @@ class Settings(BaseSettings):
 
     # Telegram（bot-api）
     telegram_bot_token: str = ""
+    telegram_proxy: str = ""  # 访问 api.telegram.org 的代理（如 http://127.0.0.1:7897），留空直连
 
     # LLM（经 RouterHub 中转，OpenAI 兼容协议）
     llm_base_url: str = "http://127.0.0.1:8000/v1"
