@@ -21,6 +21,7 @@ _BOT_COMMANDS = [
     BotCommand(command="start", description="开始使用"),
     BotCommand(command="new", description="开启新对话（清空上下文）"),
     BotCommand(command="model", description="查看/切换模型"),
+    BotCommand(command="role", description="查看/切换角色人设"),
     BotCommand(command="help", description="显示帮助"),
 ]
 

@@ -147,6 +147,41 @@ class AgentClient:
             logger.warning(f"获取当前模型失败：{e}")
             return None
 
+    async def get_roles(self) -> list[dict]:
+        """获取可用角色人设列表。"""
+        try:
+            resp = await self._client.get("/roles")
+            resp.raise_for_status()
+            return [dict(item) for item in resp.json()]
+        except (httpx.HTTPError, TypeError) as e:
+            logger.warning(f"获取角色列表失败：{e}")
+            return []
+
+    async def get_current_role(self, telegram_id: int) -> str | None:
+        """获取用户当前生效的角色人设。"""
+        try:
+            resp = await self._client.get("/roles/current", params={"telegram_id": telegram_id})
+            resp.raise_for_status()
+            return str(resp.json()["role"])
+        except httpx.HTTPError as e:
+            logger.warning(f"获取当前角色失败：{e}")
+            return None
+
+    async def select_role(self, telegram_id: int, role: str) -> tuple[bool, str]:
+        """设置用户偏好角色人设，返回 (是否成功, 提示信息)。"""
+        try:
+            resp = await self._client.post(
+                "/roles/select",
+                json={"telegram_id": telegram_id, "role": role},
+            )
+            if resp.status_code == 400:
+                return False, f"角色 {role} 不存在。"
+            resp.raise_for_status()
+            return True, f"已切换人设为 <b>{role}</b>，开启新对话体验更佳（/new）。"
+        except httpx.HTTPError as e:
+            logger.warning(f"切换角色失败：{e}")
+            return False, "AI 服务暂时不可用，请稍后重试。"
+
     async def select_model(self, telegram_id: int, model: str) -> tuple[bool, str]:
         """设置用户偏好模型，返回 (是否成功, 提示信息)。"""
         try:

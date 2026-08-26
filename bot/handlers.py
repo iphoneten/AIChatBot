@@ -21,15 +21,21 @@ HELP_TEXT = (
     "/start - 开始使用\n"
     "/help - 显示本帮助\n"
     "/new - 开启新对话（清空上下文）\n"
-    "/model - 查看可用模型；/model 名称 - 切换模型\n\n"
+    "/model - 查看可用模型；/model 名称 - 切换模型\n"
+    "/role - 查看角色人设；/role 名称 - 切换人设\n\n"
     "直接发送文字即可与我对话，我会记住本次对话的上下文。"
 )
 
 
-def _client() -> AgentClient:
+def _client():
     """构造 agent 内部 API 客户端。"""
     settings = get_settings()
     return AgentClient(settings.agent_base_url, settings.agent_internal_token)
+
+
+def _esc(text) -> str:
+    """HTML 转义（用于拼接用户可见文本）。"""
+    return str(text).replace("&", "&amp;").replace("<", "&lt;").replace(">", "&gt;")
 
 
 @router.message(CommandStart())
@@ -76,6 +82,28 @@ async def cmd_model(message: Message) -> None:
             )
         else:
             _, tip = await client.select_model(message.from_user.id, arg)
+            await message.answer(tip)
+
+
+@router.message(Command("role"))
+async def cmd_role(message: Message) -> None:
+    """查看或切换角色人设：/role 列出；/role 名称 切换。"""
+    arg = (message.text or "").removeprefix("/role").strip()
+    async with _client() as client:
+        if not arg:
+            roles = await client.get_roles()
+            current = await client.get_current_role(message.from_user.id)
+            if not roles:
+                await message.answer("无法获取角色列表，请检查 AI 服务是否在运行。")
+                return
+            listing = "\n".join(
+                f"• <b>{_esc(r['name'])}</b> - {_esc(r['description'])}" for r in roles
+            )
+            await message.answer(
+                f"当前人设：<b>{current or '未知'}</b>\n可用人设：\n{listing}\n\n切换示例：<code>/role 暴躁老哥</code>"
+            )
+        else:
+            _ok, tip = await client.select_role(message.from_user.id, arg)
             await message.answer(tip)
 
 

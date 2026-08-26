@@ -136,3 +136,23 @@ class SessionStore:
             )
             await db.commit()
         return (cursor.rowcount or 0) > 0
+
+    async def get_preferred_role(self, telegram_id: int) -> str | None:
+        """获取用户偏好的角色人设（未设置时为 None，回退默认助手）。"""
+        async with self._connect() as db:
+            cursor = await db.execute(
+                "SELECT preferred_role FROM users WHERE telegram_id = ?",
+                (telegram_id,),
+            )
+            row = await cursor.fetchone()
+        return row[0] if row else None
+
+    async def set_preferred_role(self, telegram_id: int, role: str) -> bool:
+        """设置用户偏好角色人设，用户不存在时返回 False。"""
+        async with self._connect() as db:
+            cursor = await db.execute(
+                "UPDATE users SET preferred_role = ? WHERE telegram_id = ?",
+                (role, telegram_id),
+            )
+            await db.commit()
+        return (cursor.rowcount or 0) > 0

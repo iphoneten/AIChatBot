@@ -27,11 +27,12 @@ async def init_db() -> None:
     db_path.parent.mkdir(parents=True, exist_ok=True)
     async with aiosqlite.connect(db_path) as db:
         await db.executescript(_SCHEMA_PATH.read_text(encoding="utf-8"))
-        # 兼容旧库：users.preferred_model 列已存在时忽略报错
-        try:
-            await db.execute("ALTER TABLE users ADD COLUMN preferred_model TEXT")
-        except aiosqlite.OperationalError:
-            pass
+        # 兼容旧库：新增列已存在时忽略报错
+        for column in ("preferred_model TEXT", "preferred_role TEXT"):
+            try:
+                await db.execute(f"ALTER TABLE users ADD COLUMN {column}")
+            except aiosqlite.OperationalError:
+                pass
         await db.commit()
     logger.info(f"数据库就绪：{db_path}")
 

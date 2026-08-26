@@ -10,6 +10,7 @@ from agent.llm import LLMClient, LLMError
 from agent.session import SessionStore
 from core.config import get_settings
 from core.logging import setup_logging
+from core.personas import get_persona, list_personas
 
 logger = setup_logging("ai-agent")
 
@@ -53,6 +54,29 @@ class RegisterRequest(BaseModel):
     first_name: str | None = None
 
 
+class SetRoleRequest(BaseModel):
+    """设置偏好角色请求体。"""
+
+    telegram_id: int = Field(gt=0)
+    role: str = Field(min_length=1)
+
+
+async def _system_prompt_for(store: SessionStore, telegram_id: int) -> tuple[str, str]:
+    """取用户生效的人设，返回 (prompt, 角色名)。
+
+    用户设置了偏好角色且存在时用其 prompt，否则回退全局默认。
+    """
+    settings = get_settings()
+    preferred = await store.get_preferred_role(telegram_id)
+    if preferred:
+        persona = get_persona(preferred)
+        if persona:
+            return persona.prompt, persona.name
+        # 人设可能已被配置文件移除，回退默认
+        logger.warning(f"用户 {telegram_id} 的角色 '{preferred}' 不存在，回退默认人设")
+    return settings.system_prompt, "默认"
+
+
 def create_router(llm: LLMClient, store: SessionStore) -> APIRouter:
     router = APIRouter()
 
@@ -62,9 +86,10 @@ def create_router(llm: LLMClient, store: SessionStore) -> APIRouter:
         settings = get_settings()
         await store.ensure_user(req.telegram_id, req.username, req.first_name)
 
+        system_prompt, _role_name = await _system_prompt_for(store, req.telegram_id)
         model = (await store.get_preferred_model(req.telegram_id)) or settings.llm_model
         history = await store.get_history(req.telegram_id, req.chat_id, settings.max_context_messages)
-        messages = [{"role": "system", "content": settings.system_prompt}, *history, {"role": "user", "content": req.text}]
+        messages = [{"role": "system", "content": system_prompt}, *history, {"role": "user", "content": req.text}]
 
         try:
             reply = await llm.chat(messages, model=model)
@@ -97,9 +122,10 @@ def create_router(llm: LLMClient, store: SessionStore) -> APIRouter:
         """
         settings = get_settings()
         await store.ensure_user(req.telegram_id, req.username, req.first_name)
+        system_prompt, _role_name = await _system_prompt_for(store, req.telegram_id)
         model = (await store.get_preferred_model(req.telegram_id)) or settings.llm_model
         history = await store.get_history(req.telegram_id, req.chat_id, settings.max_context_messages)
-        messages = [{"role": "system", "content": settings.system_prompt}, *history, {"role": "user", "content": req.text}]
+        messages = [{"role": "system", "content": system_prompt}, *history, {"role": "user", "content": req.text}]
 
         async def generate():
             parts: list[str] = []
@@ -159,6 +185,29 @@ def create_router(llm: LLMClient, store: SessionStore) -> APIRouter:
         if not ok:
             raise HTTPException(status_code=404, detail="用户不存在")
         return {"model": req.model}
+
+    @router.get("/roles", response_model=list[dict])
+    async def roles() -> list[dict]:
+        """可用角色人设列表。"""
+        return [{"name": p.name, "description": p.description} for p in list_personas()]
+
+    @router.get("/roles/current")
+    async def current_role(telegram_id: int) -> dict[str, str]:
+        """查询用户当前生效的角色人设。"""
+        _, role_name = await _system_prompt_for(store, telegram_id)
+        return {"role": role_name}
+
+    @router.post("/roles/select")
+    async def select_role(req: SetRoleRequest) -> dict[str, str]:
+        """设置用户偏好角色人设（校验角色存在）。"""
+        await store.ensure_user(req.telegram_id, None, None)
+        persona = get_persona(req.role)
+        if persona is None:
+            raise HTTPException(status_code=400, detail=f"角色 '{req.role}' 不存在")
+        ok = await store.set_preferred_role(req.telegram_id, req.role)
+        if not ok:
+            raise HTTPException(status_code=404, detail="用户不存在")
+        return {"role": req.role}
 
     @router.get("/admin/users", response_model=list[dict])
     async def admin_users() -> list[dict]:

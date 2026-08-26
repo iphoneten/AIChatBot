@@ -8,6 +8,7 @@ CREATE TABLE IF NOT EXISTS users (
     username        TEXT,                          -- @用户名（可变更）
     first_name      TEXT,                          -- 显示名
     preferred_model TEXT,                          -- 用户偏好模型（空则用全局默认）
+    preferred_role  TEXT,                          -- 用户偏好角色人设（空则用默认助手）
     created_at      TEXT NOT NULL DEFAULT (datetime('now', 'localtime'))
 );
 
