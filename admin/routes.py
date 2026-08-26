@@ -5,7 +5,7 @@ from typing import Annotated
 
 from fastapi import APIRouter, Depends, HTTPException, Request
 from fastapi.security import HTTPAuthorizationCredentials, HTTPBearer
-from pydantic import BaseModel
+from pydantic import BaseModel, Field
 
 from admin.auth import create_jwt, decode_jwt, verify_password
 from core.config import Settings
@@ -44,6 +44,12 @@ class LimitRequest(BaseModel):
 
     telegram_id: int
     daily_limit: int
+
+
+class AllowedModelsRequest(BaseModel):
+    """可用模型白名单请求体（空列表=开放全部）。"""
+
+    allowed: list[str] = Field(default_factory=list)
 
 
 def require_admin(
@@ -146,6 +152,29 @@ def create_admin_router() -> APIRouter:
             raise HTTPException(status_code=404, detail="人设不存在")
         if resp.status_code != 200:
             raise HTTPException(status_code=502, detail="删除失败")
+        return {"ok": True}
+
+    @router.get("/models")
+    async def get_models(
+        request: Request, _: Annotated[str, Depends(require_admin)]
+    ) -> dict:
+        """模型设置：全部可选与当前白名单。"""
+        resp = await request.app.state.agent.get("/admin/models")
+        if resp.status_code != 200:
+            raise HTTPException(status_code=502, detail="无法获取模型列表，请检查 AI 服务")
+        data: dict = resp.json()
+        return data
+
+    @router.post("/models")
+    async def save_models(
+        request: Request,
+        req: AllowedModelsRequest,
+        _: Annotated[str, Depends(require_admin)],
+    ) -> dict:
+        """保存可用模型白名单。"""
+        resp = await request.app.state.agent.post("/admin/models", json=req.model_dump())
+        if resp.status_code != 200:
+            raise HTTPException(status_code=502, detail="保存失败")
         return {"ok": True}
 
     @router.get("/messages", response_model=list[dict])

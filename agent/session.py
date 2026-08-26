@@ -213,6 +213,29 @@ class SessionStore:
             row = await cursor.fetchone()
         return row[0] if row else 0
 
+    # ---------- 应用设置（键值对） ----------
+
+    async def get_setting(self, key: str) -> str | None:
+        """读取设置项，不存在返回 None。"""
+        async with self._connect() as db:
+            cursor = await db.execute(
+                "SELECT value FROM app_settings WHERE key = ?", (key,)
+            )
+            row = await cursor.fetchone()
+        return row[0] if row else None
+
+    async def set_setting(self, key: str, value: str) -> None:
+        """写入设置项。"""
+        async with self._connect() as db:
+            await db.execute(
+                """
+                INSERT INTO app_settings (key, value) VALUES (?, ?)
+                ON CONFLICT(key) DO UPDATE SET value = excluded.value
+                """,
+                (key, value),
+            )
+            await db.commit()
+
     # ---------- 封禁与用量控制 ----------
 
     async def get_ban_info(self, telegram_id: int) -> tuple[bool, str | None]:

@@ -15,6 +15,12 @@ CREATE TABLE IF NOT EXISTS users (
     created_at      TEXT NOT NULL DEFAULT (datetime('now', 'localtime'))
 );
 
+-- 应用设置（键值对，如可用模型白名单 allowed_models）
+CREATE TABLE IF NOT EXISTS app_settings (
+    key   TEXT PRIMARY KEY,
+    value TEXT NOT NULL
+);
+
 -- 角色人设表（首次启动时从 personas.json 导入种子数据，此后以数据库为准）
 CREATE TABLE IF NOT EXISTS personas (
     id          INTEGER PRIMARY KEY AUTOINCREMENT,

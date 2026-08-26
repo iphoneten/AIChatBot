@@ -83,6 +83,12 @@ class LimitRequest(BaseModel):
     daily_limit: int = Field(ge=-1)
 
 
+class UpdateAllowedModelsRequest(BaseModel):
+    """更新可用模型白名单请求体（空列表=开放全部）。"""
+
+    allowed: list[str] = Field(default_factory=list)
+
+
 async def check_user_allowed(store: SessionStore, telegram_id: int) -> None:
     """对话入口校验：封禁与每日用量限制，不通过时抛出带中文提示的 403/429。
 
@@ -107,6 +113,31 @@ async def check_user_allowed(store: SessionStore, telegram_id: int) -> None:
                 status_code=429,
                 detail=f"今日提问次数已达上限（{used}/{daily_limit}），明天再来吧。",
             )
+
+
+async def _allowed_models(llm: LLMClient, store: SessionStore) -> list[str]:
+    """用户可见的模型列表：白名单为空时开放 RouterHub 全部模型。"""
+    all_models = await llm.list_models()
+    raw = await store.get_setting("allowed_models")
+    if not raw:
+        return all_models
+    try:
+        allowed = set(json.loads(raw))
+    except json.JSONDecodeError:
+        logger.warning("allowed_models 设置解析失败，回退开放全部模型")
+        return all_models
+    return [m for m in all_models if m in allowed]
+
+
+async def _resolve_model(llm: LLMClient, store: SessionStore, telegram_id: int) -> str:
+    """用户生效的模型：偏好模型仍在可用列表内则用之，否则回退全局默认。"""
+    settings = get_settings()
+    preferred = await store.get_preferred_model(telegram_id)
+    if preferred:
+        if preferred in await _allowed_models(llm, store):
+            return preferred
+        logger.warning(f"用户 {telegram_id} 的偏好模型 '{preferred}' 不可用，回退默认模型")
+    return settings.llm_model
 
 
 async def _system_prompt_for(store: SessionStore, telegram_id: int) -> tuple[str, str]:
@@ -136,7 +167,7 @@ def create_router(llm: LLMClient, store: SessionStore) -> APIRouter:
         await check_user_allowed(store, req.telegram_id)
 
         system_prompt, _role_name = await _system_prompt_for(store, req.telegram_id)
-        model = (await store.get_preferred_model(req.telegram_id)) or settings.llm_model
+        model = await _resolve_model(llm, store, req.telegram_id)
         history = await store.get_history(req.telegram_id, req.chat_id, settings.max_context_messages)
         messages = [{"role": "system", "content": system_prompt}, *history, {"role": "user", "content": req.text}]
 
@@ -173,7 +204,7 @@ def create_router(llm: LLMClient, store: SessionStore) -> APIRouter:
         await store.ensure_user(req.telegram_id, req.username, req.first_name)
         await check_user_allowed(store, req.telegram_id)
         system_prompt, _role_name = await _system_prompt_for(store, req.telegram_id)
-        model = (await store.get_preferred_model(req.telegram_id)) or settings.llm_model
+        model = await _resolve_model(llm, store, req.telegram_id)
         history = await store.get_history(req.telegram_id, req.chat_id, settings.max_context_messages)
         messages = [{"role": "system", "content": system_prompt}, *history, {"role": "user", "content": req.text}]
 
@@ -210,9 +241,11 @@ def create_router(llm: LLMClient, store: SessionStore) -> APIRouter:
 
     @router.get("/models", response_model=list[str])
     async def models() -> list[str]:
-        """从 RouterHub 获取可用模型列表。"""
+        """获取用户可见的模型列表（应用白名单过滤）。"""
         try:
-            return await llm.list_models()
+            return await _allowed_models(llm, store)
+        except LLMError as e:
+            raise HTTPException(status_code=502, detail=str(e)) from None
         except Exception as e:  # noqa: BLE001 - 统一转为服务错误
             logger.warning(f"获取模型列表失败：{type(e).__name__}: {e}")
             raise HTTPException(status_code=502, detail="无法获取模型列表，请检查 RouterHub。") from None
@@ -226,9 +259,9 @@ def create_router(llm: LLMClient, store: SessionStore) -> APIRouter:
 
     @router.post("/models/select")
     async def select_model(req: SetModelRequest) -> dict[str, str]:
-        """设置用户偏好模型（校验模型在 RouterHub 可用列表内）。"""
+        """设置用户偏好模型（校验模型在可见列表内）。"""
         await store.ensure_user(req.telegram_id, None, None)
-        available = await llm.list_models()
+        available = await _allowed_models(llm, store)
         if req.model not in available:
             raise HTTPException(status_code=400, detail=f"模型 {req.model} 不在可用列表中")
         ok = await store.set_preferred_model(req.telegram_id, req.model)
@@ -259,6 +292,30 @@ def create_router(llm: LLMClient, store: SessionStore) -> APIRouter:
         if not ok:
             raise HTTPException(status_code=404, detail="用户不存在")
         return {"role": req.role}
+
+    @router.get("/admin/models")
+    async def admin_models() -> dict:
+        """模型设置（管理后台使用）：全部可选与当前白名单。"""
+        try:
+            all_models = await llm.list_models()
+        except Exception as e:  # noqa: BLE001 - 统一转为服务错误
+            logger.warning(f"获取模型列表失败：{type(e).__name__}: {e}")
+            raise HTTPException(status_code=502, detail="无法获取模型列表，请检查 RouterHub。") from None
+        raw = await store.get_setting("allowed_models")
+        try:
+            allowed: list[str] = json.loads(raw) if raw else []
+        except json.JSONDecodeError:
+            allowed = []
+        return {"all": all_models, "allowed": allowed}
+
+    @router.post("/admin/models")
+    async def update_admin_models(req: UpdateAllowedModelsRequest) -> dict[str, int]:
+        """更新可用模型白名单（空列表=开放全部，即时生效）。"""
+        await store.set_setting(
+            "allowed_models", json.dumps(req.allowed, ensure_ascii=False)
+        )
+        logger.info(f"模型白名单已更新：{len(req.allowed)} 个")
+        return {"count": len(req.allowed)}
 
     @router.get("/admin/roles", response_model=list[dict])
     async def admin_roles() -> list[dict]:

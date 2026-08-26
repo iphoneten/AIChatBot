@@ -78,6 +78,7 @@
       <div class="tab" data-tab="users" onclick="switchTab('users')">👥 用户</div>
       <div class="tab" data-tab="roles" onclick="switchTab('roles')">🎭 角色人设</div>
       <div class="tab" data-tab="messages" onclick="switchTab('messages')">💬 对话记录</div>
+      <div class="tab" data-tab="models" onclick="switchTab('models')">🧩 模型设置</div>
     </div>
 
     <!-- Tab：统计概览 -->
@@ -128,6 +129,21 @@
             <th style="width:70px;">角色</th><th>内容</th></tr></thead>
           <tbody id="msg-rows"></tbody>
         </table>
+      </section>
+    </div>
+
+    <!-- Tab：模型设置 -->
+    <div class="tab-panel hidden" id="panel-models">
+      <section>
+        <h2>可用模型白名单
+          <button class="btn-mini" onclick="loadModelSettings()">刷新</button>
+        </h2>
+        <p style="font-size:12px;color:#9ca3af;margin-bottom:10px;">
+          勾选的模型对用户可见（<code>/model</code> 列表与切换）。不勾选任何项 = 开放全部模型。
+        </p>
+        <div id="model-checks" style="display:flex;flex-wrap:wrap;gap:8px 18px;margin-bottom:14px;"></div>
+        <button class="btn-mini btn-primary" onclick="saveAllowedModels()">保存设置</button>
+        <span id="model-msg" style="font-size:12px;color:#6b7280;margin-left:8px;"></span>
       </section>
     </div>
 
@@ -282,6 +298,8 @@ const tabLoaders = {
   stats: () => loadData(),
   users: () => loadData(),
   roles: () => loadRoleList(),
+  messages: () => { loadData(); loadMessages(); },
+  models: () => loadModelSettings(),
 };
 
 function switchTab(name) {
@@ -355,6 +373,35 @@ async function deleteRoleSilently(name) {
   await fetch('/api/roles/' + encodeURIComponent(name), {
     method: 'DELETE', headers: { Authorization: 'Bearer ' + localStorage.getItem(TOKEN_KEY) },
   });
+}
+
+// ---------- 模型设置 ----------
+
+async function loadModelSettings() {
+  const resp = await api('/models');
+  if (resp.status === 401) { logout(); return; }
+  const data = await resp.json();
+  const allowed = new Set(data.allowed || []);
+  document.getElementById('model-checks').innerHTML = data.all.map(m => `
+    <label style="font-size:13px;cursor:pointer;">
+      <input type="checkbox" value="${esc(m)}" ${allowed.has(m) ? 'checked' : ''}> <code>${esc(m)}</code>
+    </label>`).join('');
+  document.getElementById('model-msg').textContent =
+    allowed.size ? `当前白名单：${allowed.size} 个` : '当前开放全部模型';
+}
+
+async function saveAllowedModels() {
+  const checked = [...document.querySelectorAll('#model-checks input:checked')].map(i => i.value);
+  const resp = await fetch('/api/models', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json', Authorization: 'Bearer ' + localStorage.getItem(TOKEN_KEY) },
+    body: JSON.stringify({ allowed: checked }),
+  });
+  const msg = document.getElementById('model-msg');
+  if (!resp.ok) { msg.textContent = (await resp.json()).detail || '保存失败'; return; }
+  msg.textContent = checked.length
+    ? `已保存，用户可用 ${checked.length} 个模型`
+    : '已保存，当前开放全部模型';
 }
 
 function showMain() {
