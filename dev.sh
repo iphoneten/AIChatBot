@@ -57,7 +57,11 @@ start_one() {
     log "启动 ${svc} ......"
     nohup uv run python -m "${svc}" >> "${LOG_DIR}/${svc}.log" 2>&1 &
     echo $! > "${RUN_DIR}/${svc}.pid"
-    sleep 1
+    # 观察数秒，确认进程没有因网络/配置问题秒退
+    for _ in 1 2 3 4; do
+        is_running "${svc}" || break
+        sleep 1
+    done
     if is_running "${svc}"; then
         log "${svc} 已启动（PID $(service_pid "${svc}")，日志：${LOG_DIR}/${svc}.log）"
     else

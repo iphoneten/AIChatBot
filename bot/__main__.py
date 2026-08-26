@@ -1,5 +1,6 @@
 """bot-api 入口：python -m bot 启动（Long Polling）。"""
 
+import asyncio
 import sys
 
 from aiogram import Bot, Dispatcher
@@ -11,6 +12,35 @@ from aiogram.types import BotCommand, ErrorEvent
 from bot.handlers import router
 from core.config import get_settings
 from core.logging import setup_logging
+
+# 启动阶段连接重试参数：网络/代理瞬断时自动恢复，避免进程退出
+_STARTUP_MAX_ATTEMPTS = 10
+_STARTUP_RETRY_DELAY = 3  # 秒
+
+_BOT_COMMANDS = [
+    BotCommand(command="start", description="开始使用"),
+    BotCommand(command="new", description="开启新对话（清空上下文）"),
+    BotCommand(command="model", description="查看/切换模型"),
+    BotCommand(command="help", description="显示帮助"),
+]
+
+
+async def _init_telegram_api(bot: Bot, logger) -> None:
+    """启动初始化：清理 Webhook + 注册命令菜单，网络瞬断时自动重试。"""
+    for attempt in range(1, _STARTUP_MAX_ATTEMPTS + 1):
+        try:
+            await bot.delete_webhook(drop_pending_updates=True)
+            await bot.set_my_commands(_BOT_COMMANDS)
+            logger.info("命令菜单已注册")
+            return
+        except Exception as e:  # 网络类异常统一重试
+            if attempt == _STARTUP_MAX_ATTEMPTS:
+                raise
+            logger.warning(
+                f"连接 Telegram 失败（第 {attempt}/{_STARTUP_MAX_ATTEMPTS} 次，"
+                f"{_STARTUP_RETRY_DELAY}s 后重试）：{type(e).__name__}"
+            )
+            await asyncio.sleep(_STARTUP_RETRY_DELAY)
 
 
 async def main() -> None:
@@ -46,18 +76,7 @@ async def main() -> None:
                 logger.warning(f"错误提示发送失败：{notify_err}")
         return True
 
-    await bot.delete_webhook(drop_pending_updates=True)
-
-    # 注册 Telegram 命令菜单（输入框左侧菜单按钮）
-    await bot.set_my_commands(
-        [
-            BotCommand(command="start", description="开始使用"),
-            BotCommand(command="new", description="开启新对话（清空上下文）"),
-            BotCommand(command="model", description="查看/切换模型"),
-            BotCommand(command="help", description="显示帮助"),
-        ]
-    )
-    logger.info("命令菜单已注册")
+    await _init_telegram_api(bot, logger)
 
     logger.info("bot-api 已启动，Long Polling 运行中……")
     try:
@@ -68,6 +87,4 @@ async def main() -> None:
 
 
 if __name__ == "__main__":
-    import asyncio
-
     asyncio.run(main())
