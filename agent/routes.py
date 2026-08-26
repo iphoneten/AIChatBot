@@ -68,6 +68,47 @@ class UpsertRoleRequest(BaseModel):
     prompt: str = Field(min_length=1, max_length=8000)
 
 
+class BanRequest(BaseModel):
+    """封禁/解封请求体。"""
+
+    telegram_id: int = Field(gt=0)
+    banned: bool
+    reason: str | None = Field(default=None, max_length=200)
+
+
+class LimitRequest(BaseModel):
+    """设置每日提问上限请求体（0=跟随全局，-1=不限，>0=具体条数）。"""
+
+    telegram_id: int = Field(gt=0)
+    daily_limit: int = Field(ge=-1)
+
+
+async def check_user_allowed(store: SessionStore, telegram_id: int) -> None:
+    """对话入口校验：封禁与每日用量限制，不通过时抛出带中文提示的 403/429。
+
+    限额语义：用户 daily_limit 为 0 时跟随全局默认，-1 为明确不限，>0 为具体上限。
+    """
+    banned, reason = await store.get_ban_info(telegram_id)
+    if banned:
+        detail = "你已被封禁"
+        if reason:
+            detail += f"（原因：{reason}）"
+        raise HTTPException(status_code=403, detail=detail + "，如有疑问请联系管理员。")
+
+    settings = get_settings()
+    user_limit = await store.get_daily_limit(telegram_id)
+    if user_limit == -1:
+        return  # 该用户明确不限
+    daily_limit = user_limit if user_limit > 0 else settings.default_daily_limit
+    if daily_limit > 0:
+        used = await store.count_today_user_messages(telegram_id)
+        if used >= daily_limit:
+            raise HTTPException(
+                status_code=429,
+                detail=f"今日提问次数已达上限（{used}/{daily_limit}），明天再来吧。",
+            )
+
+
 async def _system_prompt_for(store: SessionStore, telegram_id: int) -> tuple[str, str]:
     """取用户生效的人设，返回 (prompt, 角色名)。
 
@@ -92,6 +133,7 @@ def create_router(llm: LLMClient, store: SessionStore) -> APIRouter:
         """多轮对话：加载历史 → 调 LLM → 保存本轮消息。"""
         settings = get_settings()
         await store.ensure_user(req.telegram_id, req.username, req.first_name)
+        await check_user_allowed(store, req.telegram_id)
 
         system_prompt, _role_name = await _system_prompt_for(store, req.telegram_id)
         model = (await store.get_preferred_model(req.telegram_id)) or settings.llm_model
@@ -129,6 +171,7 @@ def create_router(llm: LLMClient, store: SessionStore) -> APIRouter:
         """
         settings = get_settings()
         await store.ensure_user(req.telegram_id, req.username, req.first_name)
+        await check_user_allowed(store, req.telegram_id)
         system_prompt, _role_name = await _system_prompt_for(store, req.telegram_id)
         model = (await store.get_preferred_model(req.telegram_id)) or settings.llm_model
         history = await store.get_history(req.telegram_id, req.chat_id, settings.max_context_messages)
@@ -228,6 +271,34 @@ def create_router(llm: LLMClient, store: SessionStore) -> APIRouter:
         await store.upsert_persona(req.name, req.description, req.prompt)
         logger.info(f"人设已保存：{req.name}")
         return {"name": req.name}
+
+    @router.get("/admin/messages", response_model=list[dict])
+    async def admin_messages(
+        telegram_id: int | None = None, limit: int = 100
+    ) -> list[dict]:
+        """最近对话记录（可按用户过滤，管理后台使用）。"""
+        return await store.recent_messages(
+            telegram_id=telegram_id, limit=min(limit, 500)
+        )
+
+    @router.post("/admin/users/ban")
+    async def admin_ban(req: BanRequest) -> dict[str, bool]:
+        """封禁/解封用户（管理后台使用）。"""
+        await store.ensure_user(req.telegram_id, None, None)
+        ok = await store.set_banned(req.telegram_id, req.banned, req.reason)
+        if not ok:
+            raise HTTPException(status_code=404, detail="用户不存在")
+        logger.info(f"用户 {req.telegram_id} 已{'封禁' if req.banned else '解封'}")
+        return {"ok": True}
+
+    @router.post("/admin/users/limit")
+    async def admin_limit(req: LimitRequest) -> dict[str, int]:
+        """设置用户每日提问上限（管理后台使用）。"""
+        await store.ensure_user(req.telegram_id, None, None)
+        ok = await store.set_daily_limit(req.telegram_id, req.daily_limit)
+        if not ok:
+            raise HTTPException(status_code=404, detail="用户不存在")
+        return {"telegram_id": req.telegram_id, "daily_limit": req.daily_limit}
 
     @router.delete("/admin/roles/{name}")
     async def delete_role(name: str) -> dict[str, bool]:

@@ -9,6 +9,9 @@ CREATE TABLE IF NOT EXISTS users (
     first_name      TEXT,                          -- 显示名
     preferred_model TEXT,                          -- 用户偏好模型（空则用全局默认）
     preferred_role  TEXT,                          -- 用户偏好角色人设（空则用默认助手）
+    banned          INTEGER NOT NULL DEFAULT 0,    -- 封禁标记（1=已封禁）
+    banned_reason   TEXT,                          -- 封禁原因（展示用）
+    daily_limit     INTEGER NOT NULL DEFAULT 0,    -- 每日提问上限：0=跟随全局，-1=不限，>0=具体条数
     created_at      TEXT NOT NULL DEFAULT (datetime('now', 'localtime'))
 );
 

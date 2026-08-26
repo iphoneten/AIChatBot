@@ -30,7 +30,13 @@ async def init_db() -> None:
     async with aiosqlite.connect(db_path) as db:
         await db.executescript(_SCHEMA_PATH.read_text(encoding="utf-8"))
         # 兼容旧库：新增列已存在时忽略报错
-        for column in ("preferred_model TEXT", "preferred_role TEXT"):
+        for column in (
+            "preferred_model TEXT",
+            "preferred_role TEXT",
+            "banned INTEGER NOT NULL DEFAULT 0",
+            "banned_reason TEXT",
+            "daily_limit INTEGER NOT NULL DEFAULT 0",
+        ):
             try:
                 await db.execute(f"ALTER TABLE users ADD COLUMN {column}")
             except aiosqlite.OperationalError:

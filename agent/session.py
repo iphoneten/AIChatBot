@@ -70,15 +70,19 @@ class SessionStore:
         return cursor.rowcount or 0
 
     async def list_users(self) -> list[dict[str, Any]]:
-        """用户列表（含消息数与最近活跃时间，供管理后台使用）。"""
+        """用户列表（含消息数、今日提问数、封禁与限额，供管理后台使用）。"""
         async with self._connect() as db:
             db.row_factory = aiosqlite.Row
             cursor = await db.execute(
                 """
                 SELECT u.telegram_id, u.username, u.first_name,
-                       u.preferred_model, u.created_at,
+                       u.preferred_model, u.preferred_role, u.created_at,
+                       u.banned, u.banned_reason, u.daily_limit,
                        COUNT(m.id) AS message_count,
-                       MAX(m.created_at) AS last_active
+                       MAX(m.created_at) AS last_active,
+                       SUM(CASE WHEN m.role = 'user'
+                                 AND m.created_at >= date('now', 'localtime')
+                            THEN 1 ELSE 0 END) AS today_messages
                 FROM users u
                 LEFT JOIN messages m ON m.telegram_id = u.telegram_id
                 GROUP BY u.id
@@ -208,3 +212,97 @@ class SessionStore:
             cursor = await db.execute("SELECT COUNT(*) FROM personas")
             row = await cursor.fetchone()
         return row[0] if row else 0
+
+    # ---------- 封禁与用量控制 ----------
+
+    async def get_ban_info(self, telegram_id: int) -> tuple[bool, str | None]:
+        """查询用户封禁状态，返回 (是否封禁, 原因)。"""
+        async with self._connect() as db:
+            cursor = await db.execute(
+                "SELECT banned, banned_reason FROM users WHERE telegram_id = ?",
+                (telegram_id,),
+            )
+            row = await cursor.fetchone()
+        if not row:
+            return False, None
+        return bool(row[0]), row[1]
+
+    async def set_banned(self, telegram_id: int, banned: bool, reason: str | None = None) -> bool:
+        """设置封禁状态，用户不存在时返回 False。"""
+        async with self._connect() as db:
+            cursor = await db.execute(
+                """
+                UPDATE users
+                SET banned = ?, banned_reason = ?
+                WHERE telegram_id = ?
+                """,
+                (int(banned), reason if banned else None, telegram_id),
+            )
+            await db.commit()
+        return (cursor.rowcount or 0) > 0
+
+    async def set_daily_limit(self, telegram_id: int, daily_limit: int) -> bool:
+        """设置每日提问上限（0=不限），用户不存在时返回 False。"""
+        async with self._connect() as db:
+            cursor = await db.execute(
+                "UPDATE users SET daily_limit = ? WHERE telegram_id = ?",
+                (daily_limit, telegram_id),
+            )
+            await db.commit()
+        return (cursor.rowcount or 0) > 0
+
+    async def get_daily_limit(self, telegram_id: int) -> int:
+        """读取用户每日提问上限；用户或值不存在时返回 -1（表示用全局策略）。"""
+        async with self._connect() as db:
+            cursor = await db.execute(
+                "SELECT daily_limit FROM users WHERE telegram_id = ?",
+                (telegram_id,),
+            )
+            row = await cursor.fetchone()
+        return row[0] if row else -1
+
+    async def count_today_user_messages(self, telegram_id: int) -> int:
+        """统计用户今日提问数（仅 user 角色消息）。"""
+        async with self._connect() as db:
+            cursor = await db.execute(
+                """
+                SELECT COUNT(*) FROM messages
+                WHERE telegram_id = ? AND role = 'user'
+                  AND created_at >= date('now', 'localtime')
+                """,
+                (telegram_id,),
+            )
+            row = await cursor.fetchone()
+        return row[0] if row else 0
+
+    async def recent_messages(
+        self, telegram_id: int | None = None, limit: int = 100
+    ) -> list[dict[str, Any]]:
+        """最近对话记录（可按用户过滤，时间倒序）。"""
+        async with self._connect() as db:
+            db.row_factory = aiosqlite.Row
+            if telegram_id is None:
+                cursor = await db.execute(
+                    """
+                    SELECT m.telegram_id, u.username, u.first_name,
+                           m.role, m.content, m.model, m.created_at
+                    FROM messages m
+                    LEFT JOIN users u ON u.telegram_id = m.telegram_id
+                    ORDER BY m.id DESC LIMIT ?
+                    """,
+                    (limit,),
+                )
+            else:
+                cursor = await db.execute(
+                    """
+                    SELECT m.telegram_id, u.username, u.first_name,
+                           m.role, m.content, m.model, m.created_at
+                    FROM messages m
+                    LEFT JOIN users u ON u.telegram_id = m.telegram_id
+                    WHERE m.telegram_id = ?
+                    ORDER BY m.id DESC LIMIT ?
+                    """,
+                    (telegram_id, limit),
+                )
+            rows: list[Any] = await cursor.fetchall()
+        return [dict(r) for r in rows]

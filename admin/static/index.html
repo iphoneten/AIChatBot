@@ -77,6 +77,7 @@
       <div class="tab active" data-tab="stats" onclick="switchTab('stats')">📊 统计</div>
       <div class="tab" data-tab="users" onclick="switchTab('users')">👥 用户</div>
       <div class="tab" data-tab="roles" onclick="switchTab('roles')">🎭 角色人设</div>
+      <div class="tab" data-tab="messages" onclick="switchTab('messages')">💬 对话记录</div>
     </div>
 
     <!-- Tab：统计概览 -->
@@ -100,8 +101,32 @@
           <button class="btn-mini" onclick="loadData(true)">刷新</button>
         </h2>
         <table>
-          <thead><tr><th>Telegram ID</th><th>用户名</th><th>显示名</th><th>偏好模型</th><th>消息数</th><th>最近活跃</th></tr></thead>
+          <thead><tr>
+            <th>Telegram ID</th><th>用户名</th><th>显示名</th><th>偏好模型</th>
+            <th>消息数</th><th>今日用量</th><th>状态</th><th style="width:170px;">操作</th>
+          </tr></thead>
           <tbody id="user-rows"></tbody>
+        </table>
+      </section>
+    </div>
+
+    <!-- Tab：对话记录 -->
+    <div class="tab-panel hidden" id="panel-messages">
+      <section>
+        <h2>对话记录
+          <button class="btn-mini" onclick="loadMessages()">刷新</button>
+        </h2>
+        <div style="margin-bottom:12px;">
+          <select id="msg-user-filter" onchange="loadMessages()"
+                  style="padding:6px 10px;border:1px solid #d1d5db;border-radius:6px;font-size:13px;">
+            <option value="">全部用户</option>
+          </select>
+          <span style="font-size:12px;color:#9ca3af;margin-left:8px;">最近 100 条（倒序）</span>
+        </div>
+        <table>
+          <thead><tr><th style="width:140px;">时间</th><th style="width:110px;">用户</th>
+            <th style="width:70px;">角色</th><th>内容</th></tr></thead>
+          <tbody id="msg-rows"></tbody>
         </table>
       </section>
     </div>
@@ -166,10 +191,89 @@ async function loadData(force) {
     Object.entries(stats.messages_by_model).map(([m, c]) => `<tr><td>${esc(m)}</td><td>${c}</td></tr>`).join('');
 
   const users = await (await api('/users')).json();
-  document.getElementById('user-rows').innerHTML = users.map(u => `
+  renderUsers(users);
+  renderUserFilter(users);
+}
+
+function renderUsers(users) {
+  document.getElementById('user-rows').innerHTML = users.map(u => {
+    const limitText = u.daily_limit === -1 ? '不限'
+      : u.daily_limit > 0 ? `${u.today_messages || 0}/${u.daily_limit}` : `${u.today_messages || 0}/跟随全局`;
+    const status = u.banned
+      ? `<span style="color:#dc2626;" title="${esc(u.banned_reason || '')}">已封禁</span>`
+      : '<span style="color:#16a34a;">正常</span>';
+    const actions = u.banned
+      ? `<button class="btn-mini" onclick='banUser(${u.telegram_id}, false)'>解封</button>`
+      : `<button class="btn-mini btn-danger" onclick='banUser(${u.telegram_id}, true)'>封禁</button>`;
+    return `
     <tr><td>${u.telegram_id}</td><td>${esc(u.username ? '@' + u.username : '-')}</td>
     <td>${esc(u.first_name)}</td><td>${esc(u.preferred_model || '默认')}</td>
-    <td>${u.message_count}</td><td>${esc(u.last_active || '-')}</td></tr>`).join('');
+    <td>${u.message_count}</td><td>${limitText}</td><td>${status}</td>
+    <td>${actions}
+      <button class="btn-mini" onclick='setUserLimit(${u.telegram_id}, ${JSON.stringify(u.daily_limit ?? 0)})'>限额</button>
+    </td></tr>`;
+  }).join('');
+}
+
+function renderUserFilter(users) {
+  const sel = document.getElementById('msg-user-filter');
+  const current = sel.value;
+  // 保留第一个"全部用户"选项，重建其余
+  sel.innerHTML = '<option value="">全部用户</option>' + users.map(u =>
+    `<option value="${u.telegram_id}">${esc(u.username ? '@' + u.username : u.first_name || u.telegram_id)}</option>`
+  ).join('');
+  if (current) sel.value = current;
+}
+
+// ---------- 封禁与用量控制 ----------
+
+async function banUser(telegramId, banned) {
+  let reason = null;
+  if (banned) {
+    reason = prompt('请输入封禁原因（显示给用户）：');
+    if (reason === null) return;  // 用户取消
+  } else {
+    if (!confirm(`确定解封用户 ${telegramId}？`)) return;
+  }
+  const resp = await fetch('/api/users/ban', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json', Authorization: 'Bearer ' + localStorage.getItem(TOKEN_KEY) },
+    body: JSON.stringify({ telegram_id: telegramId, banned, reason }),
+  });
+  if (!resp.ok) alert((await resp.json()).detail || '操作失败');
+  loadData();
+}
+
+async function setUserLimit(telegramId, current) {
+  const input = prompt(
+    '每日提问上限：\n0 = 跟随全局默认\n-1 = 不限\n正整数 = 具体条数',
+    String(current ?? 0)
+  );
+  if (input === null) return;
+  const dailyLimit = parseInt(input, 10);
+  if (isNaN(dailyLimit) || dailyLimit < -1) { alert('请输入 >= -1 的整数'); return; }
+  const resp = await fetch('/api/users/limit', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json', Authorization: 'Bearer ' + localStorage.getItem(TOKEN_KEY) },
+    body: JSON.stringify({ telegram_id: telegramId, daily_limit: dailyLimit }),
+  });
+  if (!resp.ok) alert((await resp.json()).detail || '设置失败');
+  loadData();
+}
+
+// ---------- 对话记录 ----------
+
+async function loadMessages() {
+  const filter = document.getElementById('msg-user-filter').value;
+  const path = '/messages' + (filter ? `?telegram_id=${filter}` : '');
+  const msgs = await (await api(path)).json();
+  document.getElementById('msg-rows').innerHTML = msgs.map(m => `
+    <tr>
+      <td>${esc(m.created_at)}</td>
+      <td>${esc('@' + m.username || m.first_name || m.telegram_id)}</td>
+      <td>${m.role === 'user' ? '👤' : '🤖'}</td>
+      <td style="word-break:break-all;">${esc(m.content.length > 200 ? m.content.slice(0, 200) + '…' : m.content)}</td>
+    </tr>`).join('') || '<tr><td colspan="4" style="color:#9ca3af;">暂无记录</td></tr>';
 }
 
 // ---------- Tab 切换（各 Tab 数据按需加载） ----------

@@ -28,6 +28,7 @@ class Settings(BaseSettings):
     max_context_messages: int = 20
     llm_timeout: int = 60
     llm_max_retries: int = 3  # 瞬态错误最大尝试次数（含首次）
+    default_daily_limit: int = 0  # 全局默认每日提问上限（0=不限，用户未单独设置时生效）
 
     # 服务地址（bot-api / admin-web 调用 agent 用）
     agent_base_url: str = "http://127.0.0.1:8100"

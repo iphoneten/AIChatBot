@@ -31,6 +31,21 @@ class UpsertRoleRequest(BaseModel):
     prompt: str
 
 
+class BanRequest(BaseModel):
+    """封禁/解封请求体。"""
+
+    telegram_id: int
+    banned: bool
+    reason: str | None = None
+
+
+class LimitRequest(BaseModel):
+    """每日提问上限请求体。"""
+
+    telegram_id: int
+    daily_limit: int
+
+
 def require_admin(
     request: Request,
     cred: Annotated[HTTPAuthorizationCredentials | None, Depends(_bearer)],
@@ -132,5 +147,53 @@ def create_admin_router() -> APIRouter:
         if resp.status_code != 200:
             raise HTTPException(status_code=502, detail="删除失败")
         return {"ok": True}
+
+    @router.get("/messages", response_model=list[dict])
+    async def messages(
+        request: Request,
+        _: Annotated[str, Depends(require_admin)],
+        telegram_id: int | None = None,
+        limit: int = 100,
+    ) -> list[dict]:
+        """最近对话记录（可按用户过滤）。"""
+        params: dict[str, int | str] = {"limit": min(limit, 500)}
+        if telegram_id is not None:
+            params["telegram_id"] = telegram_id
+        resp = await request.app.state.agent.get(
+            "/admin/messages", params=params  # type: ignore[arg-type]
+        )
+        if resp.status_code != 200:
+            raise HTTPException(status_code=502, detail="无法从 AI 服务读取数据")
+        result: list[dict] = resp.json()
+        return result
+
+    @router.post("/users/ban")
+    async def ban_user(
+        request: Request,
+        req: BanRequest,
+        _: Annotated[str, Depends(require_admin)],
+    ) -> dict:
+        """封禁/解封用户。"""
+        resp = await request.app.state.agent.post("/admin/users/ban", json=req.model_dump())
+        if resp.status_code == 404:
+            raise HTTPException(status_code=404, detail="用户不存在")
+        if resp.status_code != 200:
+            raise HTTPException(status_code=502, detail="操作失败")
+        return {"ok": True}
+
+    @router.post("/users/limit")
+    async def set_user_limit(
+        request: Request,
+        req: LimitRequest,
+        _: Annotated[str, Depends(require_admin)],
+    ) -> dict:
+        """设置用户每日提问上限。"""
+        resp = await request.app.state.agent.post("/admin/users/limit", json=req.model_dump())
+        if resp.status_code == 404:
+            raise HTTPException(status_code=404, detail="用户不存在")
+        if resp.status_code != 200:
+            raise HTTPException(status_code=502, detail="操作失败")
+        data: dict = resp.json()
+        return data
 
     return router
